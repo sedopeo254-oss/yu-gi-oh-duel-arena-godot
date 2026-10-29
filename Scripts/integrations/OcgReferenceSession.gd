@@ -1,0 +1,297 @@
+class_name OcgReferenceSession
+extends RefCounted
+
+## Stateful Linux development session over nonblocking pipes to ONE native core.
+## Fixture-only and count-only: not a drop-in EngineSession, not board-selectable.
+## start_fixture(), poll(viewer), submit(player, prompt_id, {offer: index}), stop().
+## Supports a declared subset of legal core choices, never scripts/battle/real decks.
+
+const MAX_PACKET_BYTES := 16384
+const RESPONSE_TIMEOUT_MS := 11000
+const ALLOWED_CHOICES := ["normal_summon", "choose_zone", "end_turn", "shuffle_hand", "discard"]
+
+var _owner := OS.get_thread_caller_id()
+var _pid := -1
+var _child_live := false
+var _stdio: FileAccess
+var _stderr: FileAccess
+var _buffer := PackedByteArray()
+var _outboxes: Array = [[], []]
+var _revision := ""
+var _started := false
+var _terminal := false
+var _ready := false
+var _pending := false
+var _deadline := 0
+var _last_error := ""
+var _over_viewers: Array = []
+var _terminal_reports: Array = []
+
+
+func _notification(what: int) -> void:
+	if what != NOTIFICATION_PREDELETE:
+		return
+	# Do not call script methods on self during PREDELETE (see EngineSession).
+	if _child_live and _pid > 0 and OS.is_process_running(_pid):
+		OS.kill(_pid)
+	if _stdio != null:
+		_stdio.close()
+	if _stderr != null:
+		_stderr.close()
+
+
+func start_fixture(seed: int = 42) -> bool:
+	if OS.get_thread_caller_id() != _owner or _started or _terminal:
+		return false
+	if seed < 0 or seed > 4294967295 or not OcgCoreDiagnostic.is_available():
+		_last_error = "A built Linux core and uint32 seed are required."
+		return false
+	var parser := JSON.new()
+	if parser.parse(FileAccess.get_file_as_string(OcgCoreDiagnostic.LOCK_PATH)) != OK:
+		_last_error = "Cannot read core manifest."
+		return false
+	if not parser.data is Dictionary or not parser.data.get("core") is Dictionary:
+		_last_error = "Invalid core manifest."
+		return false
+	_revision = str(parser.data.core.get("revision", ""))
+	if _revision.length() != 40:
+		_last_error = "Invalid pinned core revision."
+		return false
+	var process := OS.execute_with_pipe(ProjectSettings.globalize_path(OcgCoreDiagnostic.BINARY_PATH),
+		PackedStringArray(["--session", "--seed", str(seed)]), false)
+	if process.is_empty():
+		_last_error = "Could not launch the isolated core process."
+		return false
+	_pid = int(process.pid)
+	_child_live = true
+	_stdio = process.stdio
+	_stderr = process.stderr
+	_started = true
+	_pending = true
+	_deadline = Time.get_ticks_msec() + RESPONSE_TIMEOUT_MS
+	return true
+
+
+func poll(viewer: int) -> Array:
+	if OS.get_thread_caller_id() != _owner or viewer < 0 or viewer > 1:
+		return []
+	_pump()
+	var messages: Array = _outboxes[viewer].duplicate(true)
+	_outboxes[viewer] = []
+	return messages
+
+
+func submit(player: int, prompt_id: int, value: Variant) -> bool:
+	if OS.get_thread_caller_id() != _owner or not is_running() or _pending or not _ready or not _over_viewers.is_empty():
+		return false
+	if player < 0 or player > 1 or prompt_id < 1 or prompt_id > 4294967295:
+		return false
+	if not value is Dictionary or value.size() != 1 or not value.get("offer") is int:
+		return false
+	var index: int = value.offer
+	if index < 0 or index > 4294967295:
+		return false
+	# Exactly one short request may be in flight, so it fits within PIPE_BUF.
+	_stdio.store_string("ANSWER %d %d %d\n" % [player, prompt_id, index])
+	if _stdio.get_error() != OK:
+		_fail("Could not write to the native core pipe.")
+		return false
+	_pending = true
+	_deadline = Time.get_ticks_msec() + RESPONSE_TIMEOUT_MS
+	return true
+
+
+func stop() -> void:
+	if OS.get_thread_caller_id() != _owner or _terminal:
+		return
+	_terminal = true
+	_pending = false
+	# A cooperative STOP normally exits immediately; cap shutdown time if broken.
+	if _child_live and _pid > 0:
+		_stdio.store_string("STOP\n")
+		var deadline := Time.get_ticks_msec() + 250
+		while Time.get_ticks_msec() < deadline:
+			_child_live = OS.is_process_running(_pid)
+			if not _child_live:
+				break
+			OS.delay_usec(1000)
+	_close_process()
+	_buffer.clear()
+	_outboxes = [[{"type": "stopped", "player": -1}], [{"type": "stopped", "player": -1}]]
+
+
+func is_running() -> bool:
+	return _started and not _terminal
+
+
+func process_id() -> int:
+	return _pid
+
+
+func last_error() -> String:
+	return _last_error
+
+
+func _pump() -> void:
+	if not _started or _terminal:
+		return
+	# Nonblocking FileAccess reads return immediately. Keep partial JSON lines
+	# across frames and cap work/output so a corrupted child cannot freeze the UI.
+	for _iteration in 8:
+		var bytes := _stdio.get_buffer(4096)
+		if bytes.is_empty():
+			break
+		_buffer.append_array(bytes)
+		if _buffer.size() > MAX_PACKET_BYTES:
+			_fail("Native session packet exceeded the limit.")
+			return
+		var newline := _buffer.find(10)
+		while newline >= 0:
+			var line := _buffer.slice(0, newline).get_string_from_utf8()
+			_buffer = _buffer.slice(newline + 1)
+			if not _accept_line(line):
+				return
+			newline = _buffer.find(10)
+	var errors := _stderr.get_buffer(4096)
+	if not errors.is_empty():
+		_fail("Native core stderr: %s" % errors.get_string_from_utf8().left(512))
+		return
+	if not OS.is_process_running(_pid):
+		_child_live = false
+		var exit_code := OS.get_process_exit_code(_pid)
+		if _over_viewers.size() == 2 and _buffer.is_empty() and exit_code == 0:
+			# A report printed just before a crash is NOT a successful session.
+			for report in _terminal_reports:
+				_outboxes[int(report.player)].append(report.duplicate(true))
+			_terminal = true
+			_close_process()
+		else:
+			_fail("Native core exited before a clean complete result (exit %d)." % exit_code)
+	elif _pending and Time.get_ticks_msec() > _deadline:
+		_fail("Native core response timed out.")
+
+
+func _accept_line(line: String) -> bool:
+	var parser := JSON.new()
+	if parser.parse(line) != OK or not parser.data is Dictionary:
+		_fail("Native session returned malformed JSON.")
+		return false
+	var message: Dictionary = parser.data
+	if message.get("schema_version") != 1 or message.get("core_revision") != _revision or typeof(message.get("fixture_only")) != TYPE_BOOL or message.fixture_only != true:
+		_fail("Native session schema, core revision or fixture boundary mismatch.")
+		return false
+	var kind := str(message.get("type", ""))
+	if not _over_viewers.is_empty() and kind != "over":
+		_fail("Native session resumed messages after terminal processing began.")
+		return false
+	var allowed := ["schema_version", "core_revision", "fixture_only", "type", "player"]
+	match kind:
+		"ready": allowed.append("capabilities")
+		"prompt": allowed.append_array(["prompt_id", "mode", "offers", "view"])
+		"rejected": allowed.append_array(["prompt_id", "reason"])
+		"over": allowed.append_array(["winner", "reason_code", "view"])
+		_: allowed = []
+	if message.size() != allowed.size():
+		_fail("Native message contains unknown or missing fields.")
+		return false
+	for key in message:
+		if not key in allowed:
+			_fail("Native message contains an unapproved field.")
+			return false
+	if kind == "ready":
+		if _ready or message.get("player") != -1 or message.get("capabilities") != ["normal_summon", "choose_zone", "end_turn", "shuffle_hand", "discard", "deck_out"]:
+			_fail("Native session capabilities mismatch.")
+			return false
+		_ready = true
+		return true
+	if not _ready or not _whole_number(message.get("player"), 0, 1):
+		_fail("Native session message has no valid player.")
+		return false
+	var player := int(message.player)
+	if kind in ["prompt", "over"] and not _valid_view(message.get("view")):
+		_fail("Native snapshot is not the supported count-only shape.")
+		return false
+	if kind in ["prompt", "rejected"]:
+		if not _whole_number(message.get("prompt_id"), 1, 4294967295):
+			_fail("Native session prompt id is invalid.")
+			return false
+		message.prompt_id = int(message.prompt_id)
+	if kind == "prompt":
+		if not message.get("mode") in ["ACTION", "DECISION"] or not message.get("offers") is Array or message.offers.is_empty() or message.offers.size() > 64:
+			_fail("Native session prompt shape is invalid.")
+			return false
+		for offer in message.offers:
+			if not offer is Dictionary or offer.size() != 2 or not offer.get("kind") in ALLOWED_CHOICES or not offer.get("label") is String:
+				_fail("Native session offered an unsupported action.")
+				return false
+	elif kind == "rejected":
+		if not message.get("reason") in ["that is not the prompt open for you", "invalid choice index"]:
+			_fail("Native rejection is malformed.")
+			return false
+	elif kind == "over":
+		if player in _over_viewers or not _whole_number(message.get("winner"), 0, 2) or message.get("reason_code") != 2:
+			_fail("Native result is outside the supported deck-out scenario.")
+			return false
+		if not _terminal_reports.is_empty():
+			var previous: Dictionary = _terminal_reports[0]
+			if message.winner != previous.winner or message.reason_code != previous.reason_code or message.view != previous.view:
+				_fail("Native terminal reports disagree between players.")
+				return false
+		_over_viewers.append(player)
+		_terminal_reports.append(message.duplicate(true))
+		_pending = true
+		if _over_viewers.size() == 1:
+			_deadline = Time.get_ticks_msec() + 1000
+		return true
+	else:
+		_fail("Unsupported native session message type.")
+		return false
+	message.player = player
+	_outboxes[player].append(message.duplicate(true))
+	_pending = false
+	return true
+
+
+static func _valid_view(value: Variant) -> bool:
+	if not value is Dictionary or value.size() != 4:
+		return false
+	if not _whole_number(value.get("turn_player"), 0, 1) or not _whole_number(value.get("turn_number"), 1, 256):
+		return false
+	if not _whole_number(value.get("phase"), 1, 512) or not int(value.phase) in [1, 2, 4, 512]:
+		return false
+	if not value.get("players") is Array or value.players.size() != 2:
+		return false
+	for player in value.players:
+		if not player is Dictionary or player.size() != 4:
+			return false
+		for key in ["deck_count", "hand_count", "monster_count", "graveyard_count"]:
+			if not _whole_number(player.get(key), 0, 5 if key == "monster_count" else 40):
+				return false
+	return true
+
+
+static func _whole_number(value: Variant, minimum: int, maximum: int) -> bool:
+	return (value is int or value is float) and value >= minimum and value <= maximum and value == floor(value)
+
+
+func _fail(reason: String) -> void:
+	_last_error = reason
+	_terminal = true
+	_pending = false
+	_close_process()
+	_buffer.clear()
+	for viewer in [0, 1]:
+		_outboxes[viewer].append({"type": "error", "player": -1, "reason": reason})
+
+
+func _close_process() -> void:
+	if _child_live and _pid > 0 and OS.is_process_running(_pid):
+		OS.kill(_pid)
+	_child_live = false
+	_pid = -1
+	if _stdio != null:
+		_stdio.close()
+		_stdio = null
+	if _stderr != null:
+		_stderr.close()
+		_stderr = null

@@ -27,6 +27,9 @@ from Godot. It does **not** replace the playable board's engine, add effect-card
 support, or combine incompatible core forks. The GPL client and AGPL-family KCG
 fork are references, not linked dependencies. See
 [build instructions, licenses and scope](docs/OCG_CORE_DIAGNOSTIC.md).
+The next milestone adds a [stateful native reference session](docs/OCG_REFERENCE_SESSION.md)
+with isolated processes, player-specific choices and tested deck-out completion.
+It still uses synthetic Normal Monsters, not the production board or real Lua cards.
 
 ---
 

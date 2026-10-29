@@ -93,6 +93,13 @@ struct Reader {
     }
 };
 
+struct Choice {
+    std::string kind;
+    std::string label;
+    int32_t integer = 0;
+    std::vector<uint8_t> bytes;
+};
+
 struct Prompt {
     int kind = 0;
     int player = -1;
@@ -101,6 +108,7 @@ struct Prompt {
     bool end = false;
     bool shuffle = false;
     uint32_t forbidden_zones = 0;
+    std::vector<Choice> choices;
 };
 
 struct Probe {
@@ -112,6 +120,8 @@ struct Probe {
     int summoned = 0;
     int retried = 0;
     int messages = 0;
+    int winner = -1;
+    int win_reason = 0;
 
     Prompt decode(const std::vector<uint8_t>& bytes) {
         Reader r{bytes};
@@ -121,6 +131,7 @@ struct Probe {
             const auto kind = r.read(1);
             ++messages;
             switch (kind) {
+            case MSG_WIN: winner = r.read(1); win_reason = r.read(1); break;
             case MSG_RETRY: ++retried; prompt.kind = MSG_RETRY; break;
             case MSG_HINT: r.skip(6); break;
             case MSG_NEW_TURN: turn_player = r.read(1); ++turns; break;
@@ -143,11 +154,25 @@ struct Probe {
                 for (int group = 0; group < 6; ++group) {
                     auto count = r.read(1);
                     if (group == 0) prompt.summonable = count;
-                    r.skip(count * (group == 5 ? 11 : 7));
+                    for (uint32_t index = 0; index < count; ++index) {
+                        r.skip(4); // Core card code stays inside the trusted process.
+                        const auto controller = r.read(1);
+                        const auto location = r.read(1);
+                        const auto sequence = r.read(1);
+                        if (group == 0) {
+                            require(controller == uint32_t(prompt.player) && location == LOCATION_HAND,
+                                    "unsupported normal summon candidate location");
+                            prompt.choices.push_back({"normal_summon", "Normal Summon from hand slot " +
+                                std::to_string(sequence + 1), int32_t(index << 16), {}});
+                        }
+                        if (group == 5) r.skip(4);
+                    }
                 }
                 prompt.battle = r.read(1) != 0;
                 prompt.end = r.read(1) != 0;
                 prompt.shuffle = r.read(1) != 0;
+                if (prompt.end) prompt.choices.push_back({"end_turn", "End turn", 7, {}});
+                if (prompt.shuffle) prompt.choices.push_back({"shuffle_hand", "Shuffle own hand", 8, {}});
                 break;
             }
             case MSG_SELECT_PLACE:
@@ -156,7 +181,31 @@ struct Probe {
                 prompt.player = r.read(1);
                 require(r.read(1) == 1, "unsupported multi-place selection");
                 prompt.forbidden_zones = r.read(4);
+                for (uint8_t slot = 0; slot < 5; ++slot)
+                    if (!(prompt.forbidden_zones & (uint32_t(1) << slot)))
+                        prompt.choices.push_back({"choose_zone", "Main monster zone " + std::to_string(slot + 1),
+                            0, {uint8_t(prompt.player), LOCATION_MZONE, slot}});
                 break;
+            case MSG_SELECT_CARD: {
+                require(prompt.kind == 0, "multiple prompts in one packet");
+                prompt.kind = kind;
+                prompt.player = r.read(1);
+                const auto cancelable = r.read(1);
+                const auto minimum = r.read(1);
+                const auto maximum = r.read(1);
+                const auto count = r.read(1);
+                require(cancelable == 0 && minimum == 1 && maximum == 1,
+                        "reference session only supports single-card hand-limit discards");
+                for (uint32_t index = 0; index < count; ++index) {
+                    r.skip(4);
+                    const auto location = r.read(4);
+                    require((location & 0xff) == uint32_t(prompt.player) && ((location >> 8) & 0xff) == LOCATION_HAND,
+                            "reference session only supports own-hand discard candidates");
+                    prompt.choices.push_back({"discard", "Discard hand slot " + std::to_string(((location >> 16) & 0xff) + 1),
+                        0, {1, uint8_t(index)}});
+                }
+                break;
+            }
             case MSG_SELECT_CHAIN: {
                 require(prompt.kind == 0, "multiple prompts in one packet");
                 prompt.kind = kind;
@@ -183,6 +232,7 @@ struct Probe {
             require(actual >= 0 && uint32_t(actual) == length, "core message length mismatch");
             bytes.resize(length);
             Prompt prompt = decode(bytes);
+            if (winner != -1) return prompt;
             require((state & PROCESSOR_END) == 0, "duel ended before diagnostic completed");
             if ((state & PROCESSOR_WAITING) != 0) {
                 require(prompt.kind != 0, "core waiting without a supported prompt");
@@ -216,12 +266,13 @@ std::string json_string(const std::string& text) {
     return out.str();
 }
 
-void run_probe(uint32_t seed) {
+void set_fixture_callbacks() {
     set_script_reader(fixture_script);
     set_card_reader(fixture_card);
     set_message_handler(core_message);
-    DuelOwner owner(seed);
-    const intptr_t duel = owner.handle;
+}
+
+void setup_fixture(intptr_t duel) {
     require(callback_error.empty(), "core creation callback: " + callback_error);
     for (uint8_t player = 0; player < 2; ++player) {
         set_player_info(duel, player, 8000, 5, 1);
@@ -231,6 +282,125 @@ void run_probe(uint32_t seed) {
     }
     require(callback_error.empty(), "fixture callback: " + callback_error);
     start_duel(duel, uint32_t(CURRENT_RULE) << 16);
+}
+
+uint32_t unsigned_integer(const std::string& value) {
+    require(!value.empty() && value.find_first_not_of("0123456789") == std::string::npos,
+            "expected unsigned decimal integer");
+    const auto result = std::stoull(value);
+    require(result <= std::numeric_limits<uint32_t>::max(), "integer exceeds uint32");
+    return uint32_t(result);
+}
+
+void session_message(const std::string& fields) {
+    std::cout << "{\"schema_version\":1,\"core_revision\":\"" OCG_REVISION
+              "\",\"fixture_only\":true," << fields << "}\n" << std::flush;
+}
+
+std::string public_view(Probe& probe) {
+    std::ostringstream view;
+    view << "{\"turn_player\":" << probe.turn_player << ",\"turn_number\":" << probe.turns
+         << ",\"phase\":" << probe.phase << ",\"players\":[";
+    for (int player = 0; player < 2; ++player) {
+        if (player) view << ',';
+        view << "{\"deck_count\":" << query_field_count(probe.duel, player, LOCATION_DECK)
+             << ",\"hand_count\":" << query_field_count(probe.duel, player, LOCATION_HAND)
+             << ",\"monster_count\":" << query_field_count(probe.duel, player, LOCATION_MZONE)
+             << ",\"graveyard_count\":" << query_field_count(probe.duel, player, LOCATION_GRAVE) << '}';
+    }
+    view << "]}";
+    return view.str();
+}
+
+void publish_prompt(Probe& probe, const Prompt& prompt, uint32_t id) {
+    require(prompt.player == 0 || prompt.player == 1, "invalid prompt player");
+    require(!prompt.choices.empty() && prompt.choices.size() <= 64, "unsupported/empty session prompt");
+    std::ostringstream out;
+    out << "\"type\":\"prompt\",\"player\":" << prompt.player << ",\"prompt_id\":" << id
+        << ",\"mode\":\"" << (prompt.kind == MSG_SELECT_IDLECMD ? "ACTION" : "DECISION")
+        << "\",\"offers\":[";
+    for (size_t i = 0; i < prompt.choices.size(); ++i) {
+        if (i) out << ',';
+        out << "{\"kind\":" << json_string(prompt.choices[i].kind)
+            << ",\"label\":" << json_string(prompt.choices[i].label) << '}';
+    }
+    out << "],\"view\":" << public_view(probe);
+    session_message(out.str());
+}
+
+void run_session(uint32_t seed) {
+    set_fixture_callbacks();
+    DuelOwner owner(seed);
+    setup_fixture(owner.handle);
+    Probe probe{owner.handle};
+    Prompt prompt = probe.pump();
+    std::array<uint32_t, 2> sequence{{0, 0}};
+    uint32_t open_id = ++sequence.at(prompt.player);
+    session_message("\"type\":\"ready\",\"player\":-1,\"capabilities\":[\"normal_summon\",\"choose_zone\",\"end_turn\",\"shuffle_hand\",\"discard\",\"deck_out\"]");
+    publish_prompt(probe, prompt, open_id);
+    for (int command_count = 0; command_count < 4096; ++command_count) {
+        // A waiting player is not a hung engine. The watchdog applies only while
+        // executing a request, and EOF lets abandoned parent pipes terminate us.
+        alarm(0);
+        char line[256]{};
+        if (!std::cin.getline(line, sizeof(line))) {
+            require(std::cin.eof(), "session input exceeds line limit");
+            session_message("\"type\":\"stopped\",\"player\":-1");
+            return;
+        }
+        alarm(10);
+        std::istringstream input(line);
+        std::string verb, player_text, id_text, choice_text, extra;
+        input >> verb;
+        if (verb == "STOP") {
+            require(!(input >> extra), "unexpected STOP argument");
+            session_message("\"type\":\"stopped\",\"player\":-1");
+            return;
+        }
+        require(verb == "ANSWER" && bool(input >> player_text >> id_text >> choice_text) && !(input >> extra),
+                "expected ANSWER player prompt_id choice");
+        const auto player = unsigned_integer(player_text);
+        const auto id = unsigned_integer(id_text);
+        const auto choice = unsigned_integer(choice_text);
+        require(player < 2, "invalid session player");
+        if (player != uint32_t(prompt.player) || id != open_id) {
+            session_message("\"type\":\"rejected\",\"player\":" + std::to_string(player) +
+                ",\"prompt_id\":" + std::to_string(id) + ",\"reason\":\"that is not the prompt open for you\"");
+            continue;
+        }
+        if (choice >= prompt.choices.size()) {
+            session_message("\"type\":\"rejected\",\"player\":" + std::to_string(player) +
+                ",\"prompt_id\":" + std::to_string(id) + ",\"reason\":\"invalid choice index\"");
+            continue;
+        }
+        const auto& selected = prompt.choices[choice];
+        if (selected.bytes.empty()) set_responsei(owner.handle, selected.integer);
+        else {
+            std::array<uint8_t, SIZE_RETURN_VALUE> bytes{};
+            require(selected.bytes.size() <= bytes.size(), "response too large");
+            std::copy(selected.bytes.begin(), selected.bytes.end(), bytes.begin());
+            set_responseb(owner.handle, bytes.data());
+        }
+        prompt = probe.pump();
+        if (probe.winner != -1) {
+            for (int viewer = 0; viewer < 2; ++viewer)
+                session_message("\"type\":\"over\",\"player\":" + std::to_string(viewer) +
+                    ",\"winner\":" + std::to_string(probe.winner) + ",\"reason_code\":" +
+                    std::to_string(probe.win_reason) + ",\"view\":" + public_view(probe));
+            return;
+        }
+        require(prompt.kind != MSG_RETRY, "core rejected a session-offered response");
+        open_id = ++sequence.at(prompt.player);
+        publish_prompt(probe, prompt, open_id);
+    }
+    throw std::runtime_error("session command budget exceeded");
+}
+
+void run_probe(uint32_t seed) {
+    set_fixture_callbacks();
+    DuelOwner owner(seed);
+    const intptr_t duel = owner.handle;
+    setup_fixture(duel);
     Probe probe{duel};
     Prompt opening = probe.pump();
     require(opening.kind == MSG_SELECT_IDLECMD && opening.player == 0 && opening.summonable == 5,
@@ -292,13 +462,12 @@ int main(int argc, char** argv) {
     // This diagnostic intentionally only builds for Linux in its first version.
     alarm(10);
     try {
-        require(argc == 3 && std::strcmp(argv[1], "--seed") == 0, "usage: ocg_probe --seed UINT32");
-        const std::string seed_text = argv[2];
-        require(!seed_text.empty() && seed_text.find_first_not_of("0123456789") == std::string::npos,
-                "seed must be an unsigned decimal integer");
-        const auto seed = std::stoull(seed_text);
-        require(seed <= std::numeric_limits<uint32_t>::max(), "seed exceeds uint32");
-        run_probe(uint32_t(seed));
+        const bool session = argc == 4 && std::strcmp(argv[1], "--session") == 0;
+        require((argc == 3 || session) && std::strcmp(argv[session ? 2 : 1], "--seed") == 0,
+                "usage: ocg_probe [--session] --seed UINT32");
+        const auto seed = unsigned_integer(argv[session ? 3 : 2]);
+        if (session) run_session(seed);
+        else run_probe(seed);
         return 0;
     } catch (const std::exception& error) {
         std::cout << "{\"schema_version\":1,\"status\":\"error\",\"error\":" << json_string(error.what()) << "}\n";

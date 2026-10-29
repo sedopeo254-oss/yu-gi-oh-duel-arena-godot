@@ -5,6 +5,11 @@ It is an integration vertical slice, **not** a replacement gameplay backend. The
 playable board, `GameState`, `DuelSession`, and existing verified card effects are
 unchanged. A missing binary is a clear error, never a silent fallback or fake pass.
 
+The same locally built executable now also exposes a separate **stateful
+reference-session mode**. See [its API, limits and verification](OCG_REFERENCE_SESSION.md).
+The fixed diagnostic below remains available and its original seed-42 fingerprint
+is unchanged.
+
 ## Which upstream is actually used?
 
 | Requested repository | Role here | License observed |
