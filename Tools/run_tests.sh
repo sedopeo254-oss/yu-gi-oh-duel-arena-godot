@@ -4,9 +4,9 @@
 #
 # Same two hazards it guards against as the PowerShell version:
 #
-#  1. Godot writes a lot to stderr (every push_error prints a full GDScript backtrace) and
-#     the Godot binary does not return a usable exit code for a --script run, so success is
-#     decided by the "RESULT:"/"SMOKE CHECK:" line the suite prints, not by $?.
+#  1. Godot writes a lot to stderr (every push_error prints a full GDScript backtrace).
+#     Success requires BOTH exit code 0 and the suite's "RESULT:"/"SMOKE CHECK:" PASS
+#     marker. A marker printed before a shutdown crash must never hide that crash.
 #  2. A suite that fails to COMPILE makes RunTests._initialize() throw before it can call
 #     quit(), leaving the headless SceneTree running forever. The parse check runs first so
 #     a compile error is a readable failure instead of a hang, and `timeout` bounds the run.
@@ -62,12 +62,22 @@ $(cat "$err" 2>/dev/null)"
 # reads that class cache. Run this as its OWN invocation after adding a new class.
 if [ "$SCRIPT_NAME" = "--import" ]; then
   run_godot "import" 300 --import
+  if [ "$RUN_RC" -ne 0 ]; then
+    echo "IMPORT: FAIL (Godot exit $RUN_RC)"
+    printf '%s\n' "$RUN_TEXT"
+    exit 1
+  fi
   echo "IMPORT: done"
   exit 0
 fi
 
 # --- 1. parse check ---------------------------------------------------------
 run_godot "check" 180 --check-only --script "res://Scripts/tests/$SCRIPT_NAME.gd"
+if [ "$RUN_RC" -ne 0 ]; then
+  echo "----- PARSE CHECK FAILED (Godot exit $RUN_RC) -----"
+  printf '%s\n' "$RUN_TEXT"
+  exit 1
+fi
 if printf '%s' "$RUN_TEXT" | grep -Eq "Parse Error|Compile Error|Failed to (load|compile)"; then
   echo "----- PARSE CHECK FAILED -----"
   printf '%s' "$RUN_TEXT" | grep -E "Parse Error|Compile Error|Failed to (load|compile)"
@@ -76,7 +86,6 @@ fi
 
 # --- 2. the run -------------------------------------------------------------
 run_godot "run" "$TIMEOUT_SECONDS" --script "res://Scripts/tests/$SCRIPT_NAME.gd"
-RUN_TIMED_OUT=$RUN_RC
 
 echo "----- stdout -----"
 cat "$RUN_OUT" 2>/dev/null
@@ -87,8 +96,12 @@ fi
 
 # `timeout` exits 124 when it had to kill the run. That is a failure even if a PASS line
 # was printed before the hang.
-if [ "$RUN_TIMED_OUT" -eq 124 ]; then
+if [ "$RUN_RC" -eq 124 ]; then
   echo "RUNNER: FAIL (timeout after ${TIMEOUT_SECONDS}s)"
+  exit 1
+fi
+if [ "$RUN_RC" -ne 0 ]; then
+  echo "RUNNER: FAIL (Godot exit $RUN_RC)"
   exit 1
 fi
 

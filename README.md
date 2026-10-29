@@ -8,14 +8,16 @@
 A deterministic, rules-aware Yu-Gi-Oh! duel engine written in GDScript for Godot 4, plus the
 local two-player duel arena that will eventually sit on top of it.
 
-> **Status: the backend is complete; the human UI is under way (Phase 7, unit A of A–G).**
-> Phases 0–6 are done. **All 77 cards** in the target pool are implemented and tested, the
-> engine plays **whole duels** between the two real decks from the opening shuffle to a
-> legitimate game over, replays them exactly, and does so identically across processes.
-> **10,607 assertions pass across 100 suites.** Phase 7 unit A proved the UI/engine execution
-> architecture — the engine runs on its own worker thread behind `EngineSession` — and ships only a
-> thin developer spike screen. The real duel board (unit B) has not started; there is no CPU
-> opponent or 3D presentation.
+> **2026-10-29 checkpoint: a first playable local two-human duel board is now the F5 scene.**
+> See [Playing and current limitations](docs/PLAYABLE_BOARD.md). It uses the existing 77-card
+> engine, with per-viewer hidden-card handles, a handoff cover, and original vector placeholders.
+> The full engine suite passes **10,653 assertions across 101 suites** on local Godot 4.6.3;
+> board checks additionally cover privacy/navigation flows and a natural duel ending.
+> See [verification details](Reports/TEST_RESULTS.md#2026-10-29--b0-hidden-identity-projection-regression).
+> There is no CPU opponent, campaign, 3D or audio; handoff timing is not side-channel-safe.
+> The detailed roadmap and status tables below record the earlier unit-A baseline; this notice
+> and `docs/PLAYABLE_BOARD.md` supersede their claims that the board is absent or F5 opens the spike.
+> CI's pinned Godot 4.7.1 validation remains separate from the local 4.6.3 result.
 
 ---
 

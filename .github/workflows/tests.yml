@@ -94,6 +94,12 @@ jobs:
       - name: Main-scene spike check
         run: bash ./Tools/run_tests.sh SceneSpikeCheck
 
+      - name: Playable board and privacy-flow check
+        run: bash ./Tools/run_tests.sh SceneBoardCheck
+
+      - name: Natural duel through the playable board
+        run: bash ./Tools/run_tests.sh SceneBoardDuelCheck
+
       # Backend acceptance: the same scripted duels, played in two SEPARATE processes, must
       # produce byte-identical event streams, boards and replay payloads.
       - name: Cross-process determinism

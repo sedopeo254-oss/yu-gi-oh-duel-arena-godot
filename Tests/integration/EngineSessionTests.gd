@@ -89,6 +89,11 @@ class Harness extends RefCounted:
 				var m: Dictionary = pending[i]
 				if int(m.get("player", -2)) == player and str(m.get("type", "")) == type:
 					pending.remove_at(i)
+					# Legacy engine-equivalence checks consume engine-format option values;
+					# retain RAW channel messages above for all wire-privacy assertions.
+					if m.has("request"):
+						m = m.duplicate(true)
+						m["request"] = EngineSessionTests._engine_values(session, player, m["request"])
 					return m
 			if not session.wait_for_message(EngineSessionTests.TIMEOUT_MS):
 				return {}
@@ -123,6 +128,21 @@ class Harness extends RefCounted:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+## Test-only decoding at the protocol boundary. The policy works on the reference engine's
+## objects; production UI code never does. Every action/event/replay assertion is unchanged.
+static func _engine_values(session: EngineSession, viewer: int, value):
+	if value is Dictionary:
+		var out := {}
+		for key in value:
+			out[key] = _engine_values(session, viewer, value[key])
+		return out
+	if value is Array:
+		return value.map(func(item): return _engine_values(session, viewer, item))
+	if typeof(value) == TYPE_INT and value < -1:
+		return session._core.identities._reverse[viewer].get(value, {}).get("id", value)
+	return value
+
 
 static func _offer_index(offers: Array, kind: String, card_id: int = -1,
 		effect_id: String = "") -> int:
@@ -751,7 +771,8 @@ static func _answer_like_the_driver(h: Harness, policy: DuelDriver,
 			_as_submission(req, answerer._default_answer(req)))
 		return true
 	policy.engine = h.session.debug_engine()
-	var recon: Array = (prompt["offers"] as Array).map(func(o): return _action_from_offer(o))
+	var engine_offers: Array = _engine_values(h.session, pid, prompt["offers"])
+	var recon: Array = engine_offers.map(func(o): return _action_from_offer(o))
 	var current := prompt
 	for c in policy._candidates(pid, recon, str(prompt["mode"]) == EngineSession.MODE_RESPONSE):
 		if c == null:
@@ -759,7 +780,8 @@ static func _answer_like_the_driver(h: Harness, policy: DuelDriver,
 		var a: DuelAction = c
 		policy._note_try(a)
 		h.session.submit(pid, int(current["prompt_id"]),
-			{"offer": _index_of(recon, a), "choices": _choices_of(a)})
+			{"offer": _index_of(recon, a), "choices": h.session._core.identities.payload(
+				_choices_of(a), pid, policy.engine.state)})
 		var reply := h.next()
 		if reply.is_empty():
 			out["outcome"] = "timeout"

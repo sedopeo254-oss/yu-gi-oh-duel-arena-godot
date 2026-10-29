@@ -3484,3 +3484,46 @@ What the one finished suite pins down that the generic gate cannot:
 Coverage is reported honestly here and in `Reports/CARD_IMPLEMENTATION_MATRIX.csv`
 (**54 / 77 implemented, 54 / 77 tested, 23 remaining**, computed by
 `python Tools/build_matrix.py`). No test result in this file is estimated or projected.
+
+## 2026-10-29 — B0 hidden-identity projection regression
+
+Implemented the session-boundary fallback from the B0 plan (ADR-0002); internal IDs, rules and
+replay payloads are unchanged. Existing assertion bodies were retained; the session test harness
+now translates protocol handles only when feeding its engine-based reference policy.
+
+* **Reproduced before fix:** opening-hand Deck-list-order attack identified **30 / 30** cards over
+  three seeds and both first-player choices; best blind baseline **6**. Measured in an isolated
+  copy with the original `EngineSession.gd`, not inferred from source.
+* **After fix:** **0 / 30**, baseline **6**. `HiddenIdentityTests` has **46 assertions** covering
+  stable/expiring aliases, stale and guessed IDs, nested event-time visibility, enum integrity,
+  temporary Deck choices, RNG-seed filtering and option-label privacy. Its six complete real-deck
+  duels audit **4,659 hidden stubs** and **30 hidden offer/event references** against independent
+  event-time truth; no registration IDs reach those hidden references.
+* **Mutation:** returning raw IDs from `_reference()` in an isolated copy causes **11 failures**
+  (the original 45-assertion version of the suite), including the 30 / 30 attack, handle lifetime
+  checks and full-duel hidden-stub audit. Production code was not mutated.
+* Existing `EngineSessionTests`: **174 / 174**, including unit-A channel-equality tests and six
+  event/board/replay equivalence comparisons. Integration assertions: **592 / 592**. The six
+  cross-process duel digests match exactly.
+
+**Shutdown regression resolved (Godot 4.6.3).** The pre-existing exit-134 allocator abort was
+isolated to `TestFixtures._real_library`: merely calling `real_deck(0)` without starting any
+thread reproduced it in **3 / 3** processes. Loading `CardRegistry.load_library()` without the
+static cache, or explicitly clearing the cache before language teardown, exited **0 in 3 / 3**
+processes each. The retained effect callbacks match Godot's
+[static-lambda shutdown issue #102569](https://github.com/godotengine/godot/issues/102569), addressed
+upstream by [#120976](https://github.com/godotengine/godot/pull/120976) for 4.8. The test entry points
+now release that cache in `SceneTree._finalize()`, after all suites/workers finish; no production
+session or rules behavior changes. Both shell and PowerShell runners now require **exit 0 AND a
+PASS marker**, and fail nonzero import/parse invocations too. Ten new Python runner regressions
+include PASS-then-crash, parse/import failure and PASS-then-timeout; all **26** tooling tests pass.
+Post-cleanup checks all exit **0** through the hardened runner: full regression **10,653 / 10,653**
+(101 suites), focused identity **46 / 46**, session **220 / 220**, integration **592 / 592**, and
+cross-process determinism **6 / 6**. No allocator abort or `SCRIPT ERROR` appears in these logs.
+The PowerShell twin was source-reviewed but cannot be executed in this Linux image. Runtime
+validation here still uses **4.6.3**, not the repository's pinned **4.7.1**; the pinned-version CI
+remains a separate check rather than an assumed result.
+
+Focused invocation: `./Tools/run_tests.sh RunHiddenIdentityTests`. In restricted executors,
+point `XDG_DATA_HOME`, `XDG_CONFIG_HOME` and `XDG_CACHE_HOME` to writable temporary directories;
+otherwise Godot attempts to create its user-data directory outside the workspace.

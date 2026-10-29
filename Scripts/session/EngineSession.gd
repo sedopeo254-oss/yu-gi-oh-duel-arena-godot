@@ -248,7 +248,7 @@ static func project_event(ev: GameEvent, viewer: int):
 		return null
 	var data := {}
 	for k in ev.data.keys():
-		if k != "private_to":
+		if k != "private_to" and not (ev.kind == GameEvent.Kind.DUEL_STARTED and k == "seed"):
 			data[k] = ev.data[k]
 	return {"kind": GameEvent.kind_name(ev.kind), "turn": ev.turn, "phase": ev.phase,
 		"data": plain(data)}
@@ -396,6 +396,172 @@ static func default_answer(req: DecisionRequest):
 # It holds no reference to the EngineSession, so dropping the session can always join it.
 # ---------------------------------------------------------------------------
 
+class Identity extends RefCounted:
+	## Per-viewer handles for cards whose identity is hidden. Internal/replay ids never change.
+	## Handles are allocated only when this viewer receives a message (not at opponent prompts),
+	## in presentation order, and never from registration order or the duel RNG.
+	## Event references are captured at emission time, but allocated at delivery time: projecting
+	## an old event against today's board would incorrectly link a revealed return to a hidden hand.
+	const CARD_KEYS := ["card_id", "source_card_id", "source_id", "target_id", "attacker_id",
+		"defender_id", "attack_target_id", "by_card_id", "for_card_id", "substituted_by_card_id",
+		"equipped_to_id", "equipped_to"]
+	const CARD_ARRAY_KEYS := ["card_ids", "target_ids", "tribute_ids", "equipped_cards",
+		"target_candidates", "tribute_candidates", "tribute_combinations", "attack_target_candidates"]
+	const REFERENCE := "__session_hidden_reference__"
+
+	var _epochs: Dictionary = {}
+	var _handles: Array = [{}, {}]
+	var _reverse: Array = [{}, {}]
+	var _next: Array = [-2, -2]
+	var _events: Array = [[], []]
+	var _deck_generation: Array = [0, 0]
+
+
+	## Called for every engine event on the worker. No player-visible counter advances here.
+	func record(event: GameEvent, state: GameState, historical: bool = false) -> void:
+		if event.kind == GameEvent.Kind.CARD_MOVED:
+			var id := int(event.data.get("card_id", -1))
+			_epochs[id] = int(_epochs.get(id, 0)) + 1
+		for viewer in [0, 1]:
+			var projected = EngineSession.project_event(event, viewer)
+			if projected == null:
+				continue
+			# In an attached test duel, old references have no trustworthy historical visibility.
+			# Give them isolated handles rather than linking them to today's hidden cards.
+			var prefix := "past:%d:" % event.sequence if historical else ""
+			var named_id := int(event.data.get("card_id", -1)) \
+				if event.data.has("card_name") else -1
+			projected["data"] = _capture(projected["data"], viewer, state, "", prefix, named_id)
+			(_events[viewer] as Array).append(projected)
+
+
+	## A Deck search grants temporary option handles, never persistent tracking through shuffles.
+	## Shuffle has no engine event, so every delivered message expires previous Deck handles.
+	func begin_message(viewer: int) -> void:
+		_deck_generation[viewer] = int(_deck_generation[viewer]) + 1
+
+	func drain_log(viewer: int) -> Array:
+		var out: Array = []
+		for event in _events[viewer]:
+			out.append(_materialize(event, viewer))
+		_events[viewer] = []
+		return out
+
+
+	func view(raw: Dictionary, viewer: int, state: GameState) -> Dictionary:
+		var result: Dictionary = raw.duplicate(true)
+		for player in result["players"]:
+			for key in ["hand", "graveyard", "banished", "monster_zones", "spell_trap_zones",
+					"excavated"]:
+				for card in player[key]:
+					if card != null:
+						card["id"] = _materialize(_reference(int(card["id"]), viewer, state), viewer)
+			if player["field_zone"] != null:
+				var card: Dictionary = player["field_zone"]
+				card["id"] = _materialize(_reference(int(card["id"]), viewer, state), viewer)
+		return _materialize(_capture(result, viewer, state), viewer)
+
+
+	func payload(raw, viewer: int, state: GameState):
+		return _materialize(_capture(raw, viewer, state), viewer)
+
+
+	## Only the open prompt's handles are accepted. Raw guesses for a hidden id are not a backdoor.
+	func decode_choices(value, viewer: int, state: GameState):
+		if not (value is Dictionary):
+			return value
+		var result: Dictionary = value.duplicate(true)
+		var choices = result.get("choices", {})
+		if not (choices is Dictionary):
+			return result
+		for key in ["target_ids", "tribute_ids", "attack_target_id"]:
+			if choices.has(key):
+				choices[key] = _decode(choices[key], viewer, state)
+		return result
+
+
+	func _decode(value, viewer: int, state: GameState):
+		if value is Array:
+			return value.map(func(item): return _decode(item, viewer, state))
+		if typeof(value) != TYPE_INT:
+			return value
+		if value == -1:
+			return value
+		if value < -1:
+			var entry: Dictionary = _reverse[viewer].get(value, {})
+			if entry.is_empty():
+				return 0
+			var id := int(entry["id"])
+			return id if str(entry["key"]) == _key(id, viewer, state) else 0
+		var card = state.instance(value)
+		if card != null and not viewer in state.identity_visible_to(card):
+			return 0
+		return value
+
+
+	func _key(id: int, viewer: int, state: GameState) -> String:
+		var key := "%d:%d" % [id, int(_epochs.get(id, 0))]
+		var card = state.instance(id)
+		if card != null and card.zone == Enums.Zone.DECK:
+			key += ":deck:%d" % int(_deck_generation[viewer])
+		return key
+
+
+	func _reference(id: int, viewer: int, state: GameState, prefix: String = ""):
+		if id <= 0:
+			return id
+		var card = state.instance(id)
+		if card == null or (prefix.is_empty() and viewer in state.identity_visible_to(card)):
+			return id
+		return {REFERENCE: prefix + _key(id, viewer, state), "engine_id": id}
+
+
+	func _capture(value, viewer: int, state: GameState, key: String = "",
+			prefix: String = "", named_id: int = -1):
+		if value is Dictionary:
+			var out := {}
+			for k in value:
+				var child_key := str(k)
+				if child_key in ["options", "answer"] and str(value.get("kind", "")) in [
+						"CHOOSE_POSITION", "CHOOSE_ZONE", "ORDER_TRIGGERS", "YES_NO",
+						"CONFIRM_OR_PASS", "CHOOSE_EFFECT", "CHOOSE_ACTION"]:
+					child_key = ""
+				out[k] = _capture(value[k], viewer, state, child_key, prefix, named_id)
+			return out
+		if value is Array:
+			var out: Array = []
+			for item in value:
+				out.append(_capture(item, viewer, state, key, prefix, named_id))
+			return out
+		if typeof(value) == TYPE_INT and (key in CARD_KEYS or key in CARD_ARRAY_KEYS \
+				or key == "options" or key == "answer"):
+			# A projected event which explicitly names its primary card already reveals it.
+			# Keeping that past public id must NOT give it the current hidden-hand handle.
+			if key == "card_id" and value == named_id:
+				return value
+			return _reference(value, viewer, state, prefix)
+		return value
+
+
+	func _materialize(value, viewer: int):
+		if value is Dictionary:
+			if value.has(REFERENCE):
+				var key := str(value[REFERENCE])
+				if not _handles[viewer].has(key):
+					var handle := int(_next[viewer])
+					_next[viewer] = handle - 1
+					_handles[viewer][key] = handle
+					_reverse[viewer][handle] = {"id": value["engine_id"], "key": key}
+				return _handles[viewer][key]
+			var out := {}
+			for key in value:
+				out[key] = _materialize(value[key], viewer)
+			return out
+		if value is Array:
+			return value.map(func(item): return _materialize(item, viewer))
+		return value
+
+
 class Core extends RefCounted:
 	var mutex := Mutex.new()
 	var inbox_sem := Semaphore.new()
@@ -420,7 +586,7 @@ class Core extends RefCounted:
 	# --- worker only ---
 	var _open: Dictionary = {}
 	var _prompt_seq: Array = [0, 0]
-	var _log_cursor: Array = [0, 0]
+	var identities := Identity.new()
 	var _over: bool = false
 
 	# --- owner side ---
@@ -477,6 +643,8 @@ class Core extends RefCounted:
 	## Break the only reference cycle (core -> engine -> controllers -> core). The engine is kept
 	## so a test can still read a finished duel.
 	func dispose() -> void:
+		if engine != null and engine.state.event_recorded.is_connected(_record_identity_event):
+			engine.state.event_recorded.disconnect(_record_identity_event)
 		for c in controllers:
 			c.bridge = null
 		controllers = []
@@ -488,6 +656,9 @@ class Core extends RefCounted:
 		mutex.lock()
 		_worker_thread_id = OS.get_thread_caller_id()
 		mutex.unlock()
+		for event in engine.state.events:
+			identities.record(event, engine.state, true)
+		engine.state.event_recorded.connect(_record_identity_event)
 		if not setup.is_empty():
 			engine.setup_duel(setup["decks"], setup["controllers"], int(setup["first"]),
 				setup["names"])
@@ -538,7 +709,8 @@ class Core extends RefCounted:
 				or not _addresses_open(msg):
 			_reject(from, id, EngineSession.NOT_YOUR_PROMPT)
 			return
-		var action = EngineSession.action_from(msg.get("value"), _open["offers"])
+		var value = identities.decode_choices(msg.get("value"), from, engine.state)
+		var action = EngineSession.action_from(value, _open["offers"])
 		if action == null:
 			_reject(from, id, "malformed: name one offer by index, with only choice fields")
 			_reopen()
@@ -619,35 +791,57 @@ class Core extends RefCounted:
 		_over = true
 		var s := engine.state
 		for pid in [0, 1]:
+			identities.begin_message(pid)
 			_enqueue(pid, {"type": "over", "player": pid,
 				"result": Enums.DuelResult.keys()[s.result],
 				"end_reason": Enums.EndReason.keys()[s.end_reason],
-				"view": _plain_counted(engine.get_visible_state(pid)), "log": _log_delta(pid)},
+				"view": _visible_state(pid), "log": _log_delta(pid)},
 				pid == 1)
 
 	## Publish a prompt to `pid`'s channel ONLY. The view and the log are taken now, at this
 	## player's own prompt, which is what keeps the other channel independent of it.
 	func _open_prompt(pid: int, mode: String, text: String, offers: Array,
 			request: DecisionRequest) -> void:
+		identities.begin_message(pid)
 		_prompt_seq[pid] = int(_prompt_seq[pid]) + 1
 		var id: int = _prompt_seq[pid]
 		_open = {"player": pid, "id": id, "mode": mode, "text": text, "offers": offers,
 			"request": request}
 		var msg := {"type": "prompt", "player": pid, "prompt_id": id, "mode": mode,
-			"prompt": text, "view": _plain_counted(engine.get_visible_state(pid)),
+			"prompt": text, "view": _visible_state(pid),
 			"log": _log_delta(pid)}
 		if request != null:
-			msg["request"] = _plain_counted(request.to_dict())
+			msg["request"] = identities.payload(_plain_counted(request.to_dict()), pid, engine.state)
+			msg["request"]["option_labels"] = _option_labels(request, pid)
 		else:
 			var views: Array = []
 			for i in range(offers.size()):
-				views.append(EngineSession.offer_view(offers[i], i))
+				views.append(identities.payload(EngineSession.offer_view(offers[i], i), pid, engine.state))
 			msg["offers"] = views
 		mutex.lock()
 		var prompts: Array = _stats["prompts"]
 		prompts[pid] = int(prompts[pid]) + 1
 		mutex.unlock()
 		_enqueue(pid, msg, true)
+
+	## A selection from one's own Deck authorizes seeing those candidates, not
+	## unrelated cards. Other hidden candidates remain anonymous. Answers still use indices.
+	func _option_labels(request: DecisionRequest, viewer: int) -> Array:
+		var labels: Array = []
+		var cards := request.kind in [Enums.DecisionKind.SELECT_EXACTLY,
+			Enums.DecisionKind.SELECT_UP_TO, Enums.DecisionKind.SELECT_AT_LEAST,
+			Enums.DecisionKind.CHOOSE_TARGETS, Enums.DecisionKind.CHOOSE_COST,
+			Enums.DecisionKind.CHOOSE_TRIBUTES, Enums.DecisionKind.CHOOSE_DISCARD,
+			Enums.DecisionKind.CHOOSE_ATTACK_TARGET]
+		for option in request.options:
+			var label := ""
+			if cards and typeof(option) == TYPE_INT:
+				var card = engine.state.instance(option)
+				if card != null and (viewer in engine.state.identity_visible_to(card) \
+						or (card.zone == Enums.Zone.DECK and card.owner_id == viewer)):
+					label = card.card_name()
+			labels.append(label)
+		return labels
 
 	## The prompt still open, issued again under a new id after a rejected answer.
 	func _reopen() -> void:
@@ -664,14 +858,13 @@ class Core extends RefCounted:
 
 	## Everything `pid` may read that happened since their last message.
 	func _log_delta(pid: int) -> Array:
-		var evs: Array = engine.state.events
-		var out: Array = []
-		for i in range(int(_log_cursor[pid]), evs.size()):
-			var p = EngineSession.project_event(evs[i], pid)
-			if p != null:
-				out.append(p)
-		_log_cursor[pid] = evs.size()
-		return out
+		return identities.drain_log(pid)
+
+	func _record_identity_event(event: GameEvent) -> void:
+		identities.record(event, engine.state)
+
+	func _visible_state(pid: int) -> Dictionary:
+		return identities.view(_plain_counted(engine.get_visible_state(pid)), pid, engine.state)
 
 	func _plain_counted(v):
 		var n := [0]

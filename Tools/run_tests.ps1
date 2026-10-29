@@ -9,9 +9,9 @@
 #     call quit(), which leaves the headless SceneTree running forever. A parse check runs
 #     first so a compile error is an immediate, readable failure instead of a hang.
 #
-# The Godot Windows binary does not report a usable process exit code here, so success is
-# decided by the "RESULT:" line the suite prints. This script's OWN exit code is
-# authoritative: 0 on pass, 1 on failure — CI depends on that.
+# Success requires both a zero process exit code and the suite's PASS marker. A PASS
+# printed before a shutdown crash must never hide that crash. This script's own exit
+# code is authoritative: 0 on pass, 1 on failure — CI depends on that.
 #
 #   powershell -ExecutionPolicy Bypass -File Tools\run_tests.ps1                # full suite
 #   powershell -ExecutionPolicy Bypass -File Tools\run_tests.ps1 SmokeCheck     # a different entry script
@@ -73,12 +73,15 @@ function Invoke-Godot([string[]]$ExtraArgs, [string]$Tag, [int]$Timeout) {
     $godotArgs = @("--headless", "--path", "`"$project`"") + $ExtraArgs
     $p = Start-Process -FilePath $godot -ArgumentList $godotArgs -NoNewWindow -PassThru `
         -RedirectStandardOutput $o -RedirectStandardError $e
+    # Keep the process handle alive so ExitCode remains available after termination.
+    $p.Handle | Out-Null
     $finished = $p.WaitForExit($Timeout * 1000)
     if (-not $finished) { $p.Kill(); Write-Output "TIMEOUT after $Timeout seconds" }
     $text = ""
     if (Test-Path $o) { $text += (Get-Content $o -Raw) }
     if (Test-Path $e) { $text += (Get-Content $e -Raw) }
-    return @{ text = $text; stdout = $o; stderr = $e; finished = $finished }
+    $exitCode = if ($finished) { $p.ExitCode } else { $null }
+    return @{ text = $text; stdout = $o; stderr = $e; finished = $finished; exitCode = $exitCode }
 }
 
 Write-Output "Godot:   $godot"
@@ -89,13 +92,23 @@ Write-Output "Project: $project"
 # reads the class cache. Run this as its OWN invocation after adding a new class: chaining
 # it into the test run is not enough, the parse check still sees the stale cache.
 if ($Import) {
-    Invoke-Godot @("--import") "import" 300 | Out-Null
+    $importRun = Invoke-Godot @("--import") "import" 300
+    if (-not $importRun.finished -or $importRun.exitCode -ne 0) {
+        Write-Output "IMPORT: FAIL (Godot exit $($importRun.exitCode), finished=$($importRun.finished))"
+        Write-Output $importRun.text
+        exit 1
+    }
     Write-Output "IMPORT: done"
     exit 0
 }
 
 # --- 1. parse check --------------------------------------------------------
 $check = Invoke-Godot @("--check-only", "--script", "res://Scripts/tests/$Script.gd") "check" 180
+if (-not $check.finished -or $check.exitCode -ne 0) {
+    Write-Output "----- PARSE CHECK FAILED (Godot exit $($check.exitCode), finished=$($check.finished)) -----"
+    Write-Output $check.text
+    exit 1
+}
 $parseErrors = $check.text -split "`n" | Where-Object { $_ -match "Parse Error|Compile Error|Failed to (load|compile)" }
 if ($parseErrors) {
     Write-Output "----- PARSE CHECK FAILED -----"
@@ -119,6 +132,10 @@ if ($errLines.Count -gt 0) {
 # A timeout is a failure even if a PASS line was printed before the hang.
 if (-not $run.finished) {
     Write-Output "RUNNER: FAIL (timeout)"
+    exit 1
+}
+if ($run.exitCode -ne 0) {
+    Write-Output "RUNNER: FAIL (Godot exit $($run.exitCode))"
     exit 1
 }
 if ($run.text -match "RESULT:\s*PASS" -or $run.text -match "SMOKE CHECK:\s*PASS") {

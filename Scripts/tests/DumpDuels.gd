@@ -1,5 +1,9 @@
 extends SceneTree
 
+func _finalize() -> void:
+	TestFixtures.release_real_library()
+
+
 ## Cross-process determinism probe — part of the backend acceptance gate
 ## (PROJECT_STATE.md §8, unit 3). Not a suite: it asserts nothing on its own.
 ##
