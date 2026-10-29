@@ -96,3 +96,7 @@ $RECYCLE.BIN/
 *.bak
 *.orig
 *.tmp
+
+# Optional native core diagnostic: fetched source, compiler objects and local binaries.
+.cache/ocg/
+Tools/ocg/bin/

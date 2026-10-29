@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "core": {
+    "repository": "https://github.com/Fluorohydride/ygopro-core.git",
+    "revision": "c4ccbab40702e4af6da4f4ad1d7a04c3ea80ad02",
+    "license": "MIT"
+  },
+  "references_not_linked": [
+    {
+      "repository": "https://github.com/Fluorohydride/ygopro.git",
+      "revision": "60b48a4cdaaee071cddb2e0553bc426f3300cf0a",
+      "license": "GPL-2.0",
+      "role": "reference client only; not compiled or copied",
+      "matched_core_submodule": "e5ce3178a7d78d3d31de0ef40993cb83b34772ce",
+      "matched_scripts_submodule": "cfbb14cdbf7b2095db543f2620eb2e88b0fb9220"
+    },
+    {
+      "repository": "https://github.com/knight00/ocgcore-KCG.git",
+      "revision": "7efb93ef3bfdae8ac6985604cd9b7453fd7e503d",
+      "license": "AGPL-3.0-or-later with inherited MIT notices",
+      "role": "incompatible alternate core; not compiled or copied"
+    }
+  ],
+  "lua": {
+    "version": "5.4.8",
+    "url": "https://www.lua.org/ftp/lua-5.4.8.tar.gz",
+    "sha256": "4f18ddae154e793e46eeab727c59ef1c0c0c2b744e7b94219710d76f530629ae",
+    "license": "MIT"
+  }
+}

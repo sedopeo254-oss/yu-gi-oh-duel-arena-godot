@@ -19,6 +19,15 @@ local two-player duel arena that will eventually sit on top of it.
 > and `docs/PLAYABLE_BOARD.md` supersede their claims that the board is absent or F5 opens the spike.
 > CI's pinned Godot 4.7.1 validation remains separate from the local 4.6.3 result.
 
+### Optional upstream-core diagnostic
+
+An opt-in Linux development adapter can compile the pinned MIT Fluorohydride
+YGOPro core and run a real, deterministic Normal Summon / turn-flow diagnostic
+from Godot. It does **not** replace the playable board's engine, add effect-card
+support, or combine incompatible core forks. The GPL client and AGPL-family KCG
+fork are references, not linked dependencies. See
+[build instructions, licenses and scope](docs/OCG_CORE_DIAGNOSTIC.md).
+
 ---
 
 ## Table of contents

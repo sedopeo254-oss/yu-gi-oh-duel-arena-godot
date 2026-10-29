@@ -76,6 +76,16 @@ jobs:
       - name: Import the project
         run: bash ./Tools/run_tests.sh --import
 
+      # Optional locally, exercised explicitly in CI. Only pinned MIT core/Lua
+      # sources are compiled; the reference client and KCG fork are not linked.
+      - name: Build the optional upstream-core diagnostic
+        run: python3 Tools/build_ocg_probe.py --fetch
+
+      - name: Native core and Godot adapter checks
+        run: |
+          python3 Tools/ocg/test_probe.py
+          bash ./Tools/run_tests.sh RunOcgCoreTests
+
       # A suite that fails to COMPILE would otherwise hang the headless SceneTree
       # forever, so the runner does a --check-only pass first and exits 1 on any parse
       # or compile error. Running SmokeCheck first also fails fast on data-level
