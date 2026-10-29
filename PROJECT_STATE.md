@@ -6,6 +6,16 @@
 > [`docs/PLAYABLE_BOARD.md`](docs/PLAYABLE_BOARD.md) for the current implementation.
 > The unit-A tables below are historical; they do not describe the current F5 scene.
 
+## Optional core lab integration — 2026-10-29
+
+The responsive, audio-enabled arena now has a guarded **Core lab** entry and
+return path. It combines the verified native session/Newdoria Lua slice with the
+existing presentation without replacing `EngineSession` or changing its cards,
+rules or decks. Confirmation ends the old duel; cancel/missing binary preserves
+it; returning closes the native child and starts a fresh covered arena duel.
+No automatic downloads and no claim of a full native card database/backend.
+See `docs/OCG_NEWDORIA_LAB.md` and `Reports/ARENA_CORE_INTEGRATION.md`.
+
 ## User-approved presentation continuation — 2026-10-29: duel audio
 
 The normal playable board now has original anime-inspired summon, attack, face-up

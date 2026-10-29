@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "scope": "two-card native battle fixture; not the production card roster",
+  "cards": [
+    {
+      "name": "The Portrait's Secret",
+      "passcode": "32541773",
+      "code": 32541773,
+      "konami_cid": 5219,
+      "source_url": "https://www.db.yugioh-card.com/yugiohdb/card_search.action?cid=5219&ope=2&request_locale=en",
+      "category": "Normal Monster",
+      "level": 4,
+      "attribute": "EARTH",
+      "race": "Fiend",
+      "attack": 1200,
+      "defense": 1500
+    },
+    {
+      "name": "Newdoria",
+      "passcode": "04335645",
+      "code": 4335645,
+      "konami_cid": 5484,
+      "source_url": "https://www.db.yugioh-card.com/yugiohdb/card_search.action?cid=5484&ope=2&request_locale=en",
+      "ruling_url": "https://www.db.yugioh-card.com/yugiohdb/faq_search.action?cid=5484&ope=4&request_locale=ja",
+      "category": "Effect Monster",
+      "level": 4,
+      "attribute": "DARK",
+      "race": "Fiend",
+      "attack": 1200,
+      "defense": 800,
+      "effect_summary": "Mandatory trigger after battle destruction and reaching the GY; target any one field monster and destroy that target if still related at resolution."
+    }
+  ]
+}

@@ -34,6 +34,11 @@ var _audio_value: Label
 var _audio_note: Label
 var _audio_column: VBoxContainer
 var _audio_description: Label
+var _native_dialog: ConfirmationDialog
+var _native_unavailable: AcceptDialog
+var _native_layer: CanvasLayer
+var _native_lab: Control
+var _native_returning := false
 var _content: HBoxContainer
 var _left_panel: VBoxContainer
 var _right_panel: PanelContainer
@@ -80,6 +85,7 @@ func _ready() -> void:
 	start_new_duel()
 
 func _exit_tree() -> void:
+	if is_instance_valid(_native_lab): _native_lab.close_session()
 	if session != null:
 		session.stop()
 		session = null
@@ -90,6 +96,7 @@ func _unhandled_key_input(event: InputEvent) -> void:
 		get_viewport().set_input_as_handled()
 
 func start_new_duel() -> void:
+	if is_instance_valid(_native_lab): return
 	if _animations != null: _animations.reset()
 	if session != null: session.stop()
 	session = null
@@ -213,6 +220,10 @@ func _build_layout() -> void:
 	var restart_button := _button("New duel", func(): _popup_confirmation(_restart_dialog))
 	restart_button.custom_minimum_size.x = 110
 	toolbar.add_child(restart_button)
+	var native_button := _button("Core lab", _request_native_lab)
+	native_button.custom_minimum_size.x = 120
+	native_button.tooltip_text = "Optional Linux experiment: two real card records, one Lua effect, synthetic decks. Not the arena backend."
+	toolbar.add_child(native_button)
 	_tabs = HBoxContainer.new()
 	_tabs.add_theme_constant_override("separation", 8)
 	for tab in range(3):
@@ -297,6 +308,7 @@ func _build_layout() -> void:
 	_load_presentation_preferences()
 	_build_cover()
 	_build_audio_settings()
+	_build_native_navigation()
 	_restart_dialog = ConfirmationDialog.new()
 	_restart_dialog.dialog_autowrap = true
 	_restart_dialog.title = "Start a new duel?"
@@ -343,6 +355,84 @@ func _build_cover() -> void:
 	column.add_child(_reveal)
 	column.add_child(_button("New duel", func(): _popup_confirmation(_restart_dialog)))
 	column.add_child(_button("Sound settings", _popup_audio_settings))
+	column.add_child(_button("Experimental core lab", _request_native_lab))
+
+
+func _build_native_navigation() -> void:
+	_native_dialog = ConfirmationDialog.new()
+	_native_dialog.title = "Open experimental native lab?"
+	_native_dialog.dialog_autowrap = true
+	_native_dialog.dialog_text = "This ends your current arena duel without saving. The lab uses two real card records, one Newdoria Lua effect, and synthetic decks. Returning starts a new arena duel."
+	_native_dialog.get_ok_button().text = "End duel and open lab"
+	_native_dialog.confirmed.connect(_open_native_lab)
+	add_child(_native_dialog)
+	_native_unavailable = AcceptDialog.new()
+	_native_unavailable.title = "Optional native core is not built"
+	_native_unavailable.dialog_autowrap = true
+	_native_unavailable.dialog_text = "Your arena duel is unchanged. The experimental lab requires Linux and an explicit local build: python3 Tools/build_ocg_probe.py --fetch. Nothing is downloaded or executed by this dialog."
+	add_child(_native_unavailable)
+
+func _native_core_available() -> bool:
+	return OcgCoreDiagnostic.is_available()
+
+func _request_native_lab() -> void:
+	if is_instance_valid(_native_lab) or _native_dialog.visible or _native_unavailable.visible: return
+	# Cover before displaying a modal: no private field or playing cue remains behind it.
+	cover_board()
+	_audio_dialog.hide()
+	_restart_dialog.hide()
+	_surrender_dialog.hide()
+	if not _native_core_available():
+		_native_unavailable.popup_centered(Vector2i(mini(500, int(get_viewport_rect().size.x) - 32), 220))
+		return
+	_popup_confirmation(_native_dialog)
+
+func _open_native_lab() -> void:
+	if is_instance_valid(_native_lab): return
+	_native_dialog.hide()
+	if not _native_core_available():
+		_request_native_lab()
+		return
+	var packed := load("res://Scenes/dev/OcgBattleLab.tscn") as PackedScene
+	if packed == null: return
+	var lab := packed.instantiate() as Control
+	if lab == null: return
+	cover_board()
+	_animations.reset()
+	_sound.stop()
+	if session != null: session.stop()
+	session = null
+	current = {}
+	view = {}
+	logs = [[], []]
+	viewer = -1
+	finished = false
+	_reset_choice()
+	_clear(_board)
+	_clear(_choices)
+	_clear(_inspector)
+	_log.text = ""
+	_native_returning = false
+	_native_lab = lab
+	_native_layer = CanvasLayer.new()
+	_native_layer.layer = 20
+	add_child(_native_layer)
+	lab.return_requested.connect(_return_from_native_lab)
+	_native_layer.add_child(lab)
+
+func _return_from_native_lab() -> void:
+	if not is_instance_valid(_native_lab) or _native_returning: return
+	_native_returning = true
+	_native_lab.close_session()
+	_finish_native_return.call_deferred()
+
+func _finish_native_return() -> void:
+	if is_instance_valid(_native_layer): _native_layer.free()
+	_native_lab = null
+	_native_layer = null
+	_native_returning = false
+	seed_value += 1
+	start_new_duel()
 
 func _build_audio_settings() -> void:
 	_audio_dialog = AcceptDialog.new()
@@ -872,6 +962,7 @@ func _sync_window_layout() -> void:
 	_prompt.custom_minimum_size.x = maxf(180, logical.x - 80) if _narrow_board else 270
 	_toolbar.custom_minimum_size.x = 420 if not _narrow_board else 0
 	_cover_column.custom_minimum_size.x = minf(600, logical.x - 48)
+	_cover_column.add_theme_constant_override("separation", 10 if logical.y < 700 else 20)
 	for side in ["left", "right", "top", "bottom"]:
 		_margin.add_theme_constant_override("margin_" + side, 12 if _compact_layout else 20)
 	_header.vertical = logical.x < 700
@@ -879,6 +970,9 @@ func _sync_window_layout() -> void:
 	_footer.visible = logical.y >= 700 and logical.x >= 700
 	_apply_layout()
 	if _audio_dialog != null and _audio_dialog.visible: _popup_audio_settings()
+	if _native_dialog != null and _native_dialog.visible: _popup_confirmation(_native_dialog)
+	if _native_unavailable != null and _native_unavailable.visible:
+		_native_unavailable.popup_centered(Vector2i(mini(500, logical.x - 32), 220))
 	if (narrow_before != _narrow_board or _narrow_board) and not handoff_required: _render_board()
 
 func _select_tab(index: int) -> void:

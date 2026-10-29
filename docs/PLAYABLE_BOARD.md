@@ -88,3 +88,12 @@ the repository's CI-pinned 4.7.1. The board was also rendered with Mesa/OpenGL a
 visually verified by that check. Full human playthroughs and all card-specific
 UI combinations remain broader acceptance work; engine regression tests do not
 substitute for those UI checks.
+
+## Optional native-core lab
+
+**Core lab** in the toolbar / **Experimental core lab** on the cover opens a
+separate [Newdoria Lua experiment](OCG_NEWDORIA_LAB.md). It does not swap the rules
+engine of your existing duel. Confirmation ends that duel without saving; Cancel
+or a missing native binary preserves it. Returning starts a fresh original-engine
+arena duel, with the responsive visuals and sound settings retained. This is a
+two-real-card/synthetic-deck development slice, not complete card-pool support.
