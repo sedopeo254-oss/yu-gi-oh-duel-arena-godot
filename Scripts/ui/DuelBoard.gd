@@ -10,6 +10,7 @@ const CORAL := Color("ed9c8d")
 const MUTED := Color("8b9bad")
 const CardFace = preload("res://Scripts/ui/ArenaCard.gd")
 const Backdrop = preload("res://Scripts/ui/ArenaBackdrop.gd")
+const AnimationDirector = preload("res://Scripts/presentation/CardAnimationDirector.gd")
 
 var session: EngineSession
 var current: Dictionary = {}
@@ -22,6 +23,7 @@ var viewer := -1
 var handoff_required := true
 var finished := false
 var _catalog: Dictionary = {}
+var _animations: CardAnimationDirector
 var _content: HBoxContainer
 var _board: VBoxContainer
 var _choices: VBoxContainer
@@ -60,6 +62,7 @@ func _unhandled_key_input(event: InputEvent) -> void:
 		get_viewport().set_input_as_handled()
 
 func start_new_duel() -> void:
+	if _animations != null: _animations.reset()
 	if session != null: session.stop()
 	session = null
 	current = {}
@@ -99,6 +102,8 @@ func _process(_delta: float) -> void:
 func _on_message(message: Dictionary) -> void:
 	if OS.get_thread_caller_id() != OS.get_main_thread_id(): main_thread_only = false
 	var player := int(message.get("player", -1))
+	if str(message.get("type", "")) in ["prompt", "over"]:
+		_animations.ingest(player, message.get("log", []), message.get("view", {}))
 	match str(message.get("type", "")):
 		"prompt":
 			current = message
@@ -158,6 +163,10 @@ func _build_layout() -> void:
 	var cover_button := _button("Cover board  [Esc]", cover_board)
 	cover_button.custom_minimum_size.x = 170
 	header.add_child(cover_button)
+	var motion_button := CheckButton.new()
+	motion_button.text = "Reduce motion"
+	motion_button.toggled.connect(func(enabled): _animations.set_reduced_motion(enabled))
+	header.add_child(motion_button)
 	var restart_button := _button("New duel", func(): _restart_dialog.popup_centered(Vector2i(500, 180)))
 	restart_button.custom_minimum_size.x = 110
 	header.add_child(restart_button)
@@ -223,6 +232,8 @@ func _build_layout() -> void:
 	choices_scroll.add_child(_choices)
 	right.add_child(_label("Engine-enforced choices\nNo automated opponent in this build", 12, MUTED))
 	page.add_child(_label("ORIGINAL VECTOR ART  ·  77-CARD ENGINE POOL  ·  UNOFFICIAL FAN PROJECT", 11, MUTED))
+	_animations = AnimationDirector.new()
+	add_child(_animations)
 	_build_cover()
 	_restart_dialog = ConfirmationDialog.new()
 	_restart_dialog.title = "Start a new duel?"
@@ -266,6 +277,7 @@ func _build_cover() -> void:
 	column.add_child(_button("New duel", func(): _restart_dialog.popup_centered(Vector2i(500, 180))))
 
 func _show_cover(title: String) -> void:
+	_animations.conceal()
 	_content.hide()
 	_cover.show()
 	_cover_title.text = title
@@ -291,12 +303,14 @@ func _render() -> void:
 		return
 	_status.text = status_line
 	_render_board()
+	_animations.present(viewer)
 	_render_actions()
 	if viewer >= 0:
 		var recent: Array = (logs[viewer] as Array).slice(-10)
 		_log.text = "\n\n".join(recent.map(func(line): return str(line).replace("_", " ").capitalize()))
 
 func _render_board() -> void:
+	_animations.begin_layout()
 	_clear(_board)
 	if view.is_empty(): return
 	var players: Array = view.get("players", [])
@@ -384,7 +398,9 @@ func _render_side(player: Dictionary, color: Color, opposing: bool) -> void:
 		for j in range(5):
 			var i := 4 - j if opposing else j
 			var data = cards[i] if i < cards.size() else null
-			row.add_child(_zone(data, ("MONSTER " if key == "monster_zones" else "SPELL / TRAP ") + str(i + 1), color))
+			var zone := _zone(data, ("MONSTER " if key == "monster_zones" else "SPELL / TRAP ") + str(i + 1), color)
+			row.add_child(zone)
+			if key == "monster_zones": _animations.register_zone(int(player.get("id", -1)), i, zone)
 	var piles := VBoxContainer.new()
 	piles.add_theme_constant_override("separation", 8)
 	side.add_child(piles)

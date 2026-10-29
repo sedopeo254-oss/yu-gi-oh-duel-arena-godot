@@ -6,6 +6,8 @@
 This is an early **local two-human-player** client for the existing 77-card engine,
 not a finished Duel Generation equivalent. There is no CPU opponent, campaign,
 collection progression, networking, 3D arena, audio, save/resume or replay browser.
+The board now has an [event-driven animation prototype](CARD_ANIMATIONS.md), with a separate
+opt-in Portrait showcase; these are procedural placeholders, not finished artwork.
 The UI is English. All illustrations are original procedural vector placeholders;
 no Konami game artwork has been copied or downloaded.
 

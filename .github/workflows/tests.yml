@@ -97,6 +97,9 @@ jobs:
       - name: Playable board and privacy-flow check
         run: bash ./Tools/run_tests.sh SceneBoardCheck
 
+      - name: Event-driven card animation checks
+        run: bash ./Tools/run_tests.sh SceneAnimationCheck
+
       - name: Natural duel through the playable board
         run: bash ./Tools/run_tests.sh SceneBoardDuelCheck
 
