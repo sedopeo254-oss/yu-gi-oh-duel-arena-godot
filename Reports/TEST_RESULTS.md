@@ -3527,3 +3527,51 @@ remains a separate check rather than an assumed result.
 Focused invocation: `./Tools/run_tests.sh RunHiddenIdentityTests`. In restricted executors,
 point `XDG_DATA_HOME`, `XDG_CONFIG_HOME` and `XDG_CACHE_HOME` to writable temporary directories;
 otherwise Godot attempts to create its user-data directory outside the workspace.
+
+
+## 2026-10-29 — Responsive arena presentation
+
+Presentation-only changes based on the event-driven card-animation branch. No engine,
+rules, card-effect, session-projection or animation-profile code changed.
+
+Local environment: **Godot 4.6.3**, Mesa/OpenGL for rendered inspections. This does not
+claim a run of CI-pinned 4.7.1, Forward+, physical touch devices, or a human full duel.
+
+- `RunTests`: **10,653 passed / 0 failed, 101 suites**.
+- `SceneVisualCheck`: **125 assertions**, desktop/phone layout and 48-pixel targets,
+  repeated tab-button activation, resized prompt preservation, five phone lanes,
+  large hidden-hand wrapping, inspector, cover/reveal, narrow confirmations,
+  saved/reachable reduced motion and return to desktop. Added to CI.
+- Existing `SceneBoardCheck`: **30 assertions**, unchanged.
+- Existing `SceneAnimationCheck`: **44 assertions**, unchanged.
+- `SceneBoardDuelCheck`: natural LP-zero result, **134 actions**, **0 rejected / 0 refused**.
+- `SceneSpikeCheck`: successful real Normal Summon.
+- Python helper tests: **26 passed**.
+- Rendered and inspected **1600×900, 1280×720, 390×844 and 320×640**, including phone Moves,
+  Cards & feed and private cover. Reproducible helper: `CaptureArenaPresentation.gd`.
+
+The new layout check caught a narrow confirmation-window minimum-width bug; setting
+`dialog_autowrap` at dialog construction fixed it. Visual inspection also caught a
+wrapping desktop toolbar, over-wide phone zone captions, and a clipped desktop hand;
+all were corrected before the final captures. Independent review caught clipped
+four-digit stats on narrow cards; separate A/D rows and a labeled rendering fixture
+now verify the complete numbers at 51/59/64/90px card widths. No existing assertion
+was weakened.
+See [`docs/ARENA_PRESENTATION.md`](../docs/ARENA_PRESENTATION.md) for scope and limits.
+
+
+### Integration with refined Portrait presentation
+
+Reapplied the arena pass onto published animation commit `0c1bee0` (verified
+identical tree to local `b8894b9`). The workflow overlap auto-merged; both responsive
+and draw-path CI steps remain. No presentation-profile adaptations or engine changes
+were needed.
+
+On the combined tree, `SceneVisualCheck` **125**, `SceneAnimationCheck` **44**,
+`SceneAnimationRenderCheck` **24 / 182 draw samples / 0 errors**, `SceneBoardCheck`
+**30**, the real Normal Summon and natural LP-zero duel all pass. The animation
+draw-path test also passed with a real Mesa/OpenGL display, with **zero renderer,
+script or shader errors**. Combined screenshots were inspected at desktop, 390px
+and 320px widths. The regular board remains silent; the separate Portrait showcase
+retains its sound controls. The full combined-tree regression passes **10,653 /
+10,653 assertions across 101 suites**, with no script errors or leaked-instance warning.

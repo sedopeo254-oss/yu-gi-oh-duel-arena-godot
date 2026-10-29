@@ -5,17 +5,20 @@
 
 This is an early **local two-human-player** client for the existing 77-card engine,
 not a finished Duel Generation equivalent. There is no CPU opponent, campaign,
-collection progression, networking, 3D arena, audio, save/resume or replay browser.
+collection progression, networking, 3D arena, regular-board audio, save/resume or replay browser.
 The board now has an [event-driven animation prototype](CARD_ANIMATIONS.md), with a separate
-opt-in Portrait showcase; these are procedural placeholders, not finished artwork.
-The UI is English. All illustrations are original procedural vector placeholders;
+opt-in Portrait showcase with original synthesized sound. These are procedural
+illustrations, not finished licensed artwork.
+The [responsive presentation pass](ARENA_PRESENTATION.md) adds desktop/phone layouts,
+category illustrations, life-point meters and a saved reduced-motion preference.
+The UI is English. All illustrations are original procedural vector art;
 no Konami game artwork has been copied or downloaded.
 
 ## Playing
 
 1. Open `project.godot` in Godot and press F5. The two existing real decks load.
 2. Pass the screen to the named player and click **I am ready**.
-3. Use the right-hand action panel. Every action was offered by `EngineSession`;
+3. Use the right-hand action panel (the **Moves** tab in smaller windows). Every action was offered by `EngineSession`;
    the UI never decides legality or implements effects.
 4. Click cards for printed text and current statistics. Graveyard and banished
    buttons list the cards the current viewer may inspect.
@@ -58,6 +61,7 @@ all legality remains revalidated by the existing worker-thread engine.
 ```bash
 bash Tools/run_tests.sh --import
 bash Tools/run_tests.sh SceneBoardCheck
+bash Tools/run_tests.sh SceneVisualCheck
 bash Tools/run_tests.sh SceneSpikeCheck
 bash Tools/run_tests.sh SceneBoardDuelCheck
 bash Tools/run_tests.sh RunTests

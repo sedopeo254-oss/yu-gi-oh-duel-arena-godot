@@ -5,9 +5,9 @@ extends Control
 @export var seed_value := 1001
 @export var first_player := 0
 
-const TEAL := Color("5ad8cc")
-const CORAL := Color("ed9c8d")
-const MUTED := Color("8b9bad")
+const TEAL := Color("69d8ca")
+const CORAL := Color("efa896")
+const MUTED := Color("a7b6c6")
 const CardFace = preload("res://Scripts/ui/ArenaCard.gd")
 const Backdrop = preload("res://Scripts/ui/ArenaBackdrop.gd")
 const AnimationDirector = preload("res://Scripts/presentation/CardAnimationDirector.gd")
@@ -25,6 +25,22 @@ var finished := false
 var _catalog: Dictionary = {}
 var _animations: CardAnimationDirector
 var _content: HBoxContainer
+var _left_panel: VBoxContainer
+var _right_panel: PanelContainer
+var _middle_scroll: ScrollContainer
+var _tabs: HBoxContainer
+var _header: BoxContainer
+var _descriptor: Label
+var _footer: Label
+var _margin: MarginContainer
+var _cover_column: VBoxContainer
+var _compact_layout := false
+var _active_tab := 0
+var _motion_button: CheckButton
+var _toolbar: HFlowContainer
+var _narrow_board := false
+var _narrow_slot_width := 64.0
+var _narrow_pile_width := 80.0
 var _board: VBoxContainer
 var _choices: VBoxContainer
 var _prompt: Label
@@ -49,6 +65,8 @@ var _decision := false
 func _ready() -> void:
 	_load_catalog()
 	_build_layout()
+	get_window().size_changed.connect(_sync_window_layout)
+	_sync_window_layout()
 	start_new_duel()
 
 func _exit_tree() -> void:
@@ -114,7 +132,7 @@ func _on_message(message: Dictionary) -> void:
 				_clear(_inspector)
 				_inspector.add_child(_label("Select a visible card\nto inspect its details.", 17, MUTED))
 				handoff_required = true
-			status_line = _rejection_text if _rejection_text != "" else "Choose an action supplied by the rules engine."
+			status_line = _rejection_text if _rejection_text != "" else "Choose a legal move below. Tap a card to inspect it."
 		"rejected":
 			_rejection_text = "Not accepted: %s" % str(message.get("reason", "Please try again."))
 			status_line = _rejection_text
@@ -148,39 +166,60 @@ func _build_layout() -> void:
 	bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	add_child(bg)
 	var margin := MarginContainer.new()
+	_margin = margin
 	margin.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	for side in ["left", "right", "top", "bottom"]: margin.add_theme_constant_override("margin_" + side, 26)
+	for side in ["left", "right", "top", "bottom"]: margin.add_theme_constant_override("margin_" + side, 20)
 	add_child(margin)
 	var page := VBoxContainer.new()
-	page.add_theme_constant_override("separation", 18)
+	page.add_theme_constant_override("separation", 12)
 	margin.add_child(page)
-	var header := HBoxContainer.new()
+	var header := BoxContainer.new()
+	_header = header
+	header.add_theme_constant_override("separation", 12)
 	page.add_child(header)
-	var brand := _label("◇  DUEL ARENA", 30, Color("edf4f6"))
+	var brand := _label("DUEL ARENA", 26, Color("f2f1e9"))
 	brand.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	header.add_child(brand)
-	header.add_child(_label("LOCAL TWO-PLAYER   /   FIRST PLAYABLE", 13, MUTED))
-	var cover_button := _button("Cover board  [Esc]", cover_board)
-	cover_button.custom_minimum_size.x = 170
-	header.add_child(cover_button)
+	_descriptor = _label("LOCAL DUEL  /  TWO PLAYERS", 12, MUTED)
+	header.add_child(_descriptor)
+	var toolbar := HFlowContainer.new()
+	_toolbar = toolbar
+	toolbar.add_theme_constant_override("h_separation", 8)
+	header.add_child(toolbar)
+	var cover_button := _button("Cover  [Esc]", cover_board)
+	cover_button.custom_minimum_size.x = 130
+	toolbar.add_child(cover_button)
 	var motion_button := CheckButton.new()
+	_motion_button = motion_button
 	motion_button.text = "Reduce motion"
-	motion_button.toggled.connect(func(enabled): _animations.set_reduced_motion(enabled))
-	header.add_child(motion_button)
-	var restart_button := _button("New duel", func(): _restart_dialog.popup_centered(Vector2i(500, 180)))
+	motion_button.custom_minimum_size.y = 48
+	motion_button.add_theme_font_size_override("font_size", 14)
+	motion_button.tooltip_text = "Stop cosmetic movement. All gameplay remains available."
+	motion_button.toggled.connect(_set_reduced_motion)
+	toolbar.add_child(motion_button)
+	var restart_button := _button("New duel", func(): _popup_confirmation(_restart_dialog))
 	restart_button.custom_minimum_size.x = 110
-	header.add_child(restart_button)
+	toolbar.add_child(restart_button)
+	_tabs = HBoxContainer.new()
+	_tabs.add_theme_constant_override("separation", 8)
+	for tab in range(3):
+		var button := _button(["Arena", "Moves", "Cards & feed"][tab], _select_tab.bind(tab))
+		button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		button.alignment = HORIZONTAL_ALIGNMENT_CENTER
+		_tabs.add_child(button)
+	page.add_child(_tabs)
 	_content = HBoxContainer.new()
 	_content.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	_content.add_theme_constant_override("separation", 22)
+	_content.add_theme_constant_override("separation", 18)
 	page.add_child(_content)
 	var left := VBoxContainer.new()
-	left.custom_minimum_size.x = 260
+	_left_panel = left
+	left.custom_minimum_size.x = 250
 	left.add_theme_constant_override("separation", 14)
 	_content.add_child(left)
-	left.add_child(_label("CARD INTELLIGENCE", 13, TEAL))
+	left.add_child(_label("CARD DETAILS", 13, TEAL))
 	var inspect_scroll := ScrollContainer.new()
-	inspect_scroll.custom_minimum_size.y = 490
+	inspect_scroll.custom_minimum_size.y = 200
 	inspect_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	inspect_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	left.add_child(inspect_scroll)
@@ -190,7 +229,7 @@ func _build_layout() -> void:
 	inspect_scroll.add_child(_inspector)
 	left.add_child(_label("DUEL FEED  /  YOUR VIEW", 13, TEAL))
 	var log_scroll := ScrollContainer.new()
-	log_scroll.custom_minimum_size.y = 210
+	log_scroll.custom_minimum_size.y = 160
 	log_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	left.add_child(log_scroll)
 	_log = _label("", 13, MUTED)
@@ -198,17 +237,19 @@ func _build_layout() -> void:
 	_log.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	log_scroll.add_child(_log)
 	var middle_scroll := ScrollContainer.new()
+	_middle_scroll = middle_scroll
 	middle_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	middle_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	middle_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	middle_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
 	_content.add_child(middle_scroll)
 	_board = VBoxContainer.new()
 	_board.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_board.add_theme_constant_override("separation", 10)
+	_board.add_theme_constant_override("separation", 6)
 	middle_scroll.add_child(_board)
 	var right_panel := PanelContainer.new()
-	right_panel.custom_minimum_size.x = 330
-	right_panel.add_theme_stylebox_override("panel", _box(Color("101c2b"), Color("25384b"), 16))
+	_right_panel = right_panel
+	right_panel.custom_minimum_size.x = 310
+	right_panel.add_theme_stylebox_override("panel", _box(Color("102333"), Color("35505e"), 16))
 	_content.add_child(right_panel)
 	var right := VBoxContainer.new()
 	right.add_theme_constant_override("separation", 14)
@@ -217,7 +258,7 @@ func _build_layout() -> void:
 	right.add_child(_mode)
 	_prompt = _label("", 22)
 	_prompt.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_prompt.custom_minimum_size.x = 290
+	_prompt.custom_minimum_size.x = 270
 	right.add_child(_prompt)
 	_status = _label("", 13, MUTED)
 	_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -230,17 +271,21 @@ func _build_layout() -> void:
 	_choices.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_choices.add_theme_constant_override("separation", 8)
 	choices_scroll.add_child(_choices)
-	right.add_child(_label("Engine-enforced choices\nNo automated opponent in this build", 12, MUTED))
-	page.add_child(_label("ORIGINAL VECTOR ART  ·  77-CARD ENGINE POOL  ·  UNOFFICIAL FAN PROJECT", 11, MUTED))
+	right.add_child(_label("Only legal actions are shown.\nPass the screen when the viewer changes.", 12, MUTED))
+	_footer = _label("ORIGINAL ILLUSTRATIONS   /   77-CARD POOL   /   LOCAL PASS-AND-PLAY", 11, MUTED)
+	page.add_child(_footer)
 	_animations = AnimationDirector.new()
 	add_child(_animations)
+	_load_presentation_preferences()
 	_build_cover()
 	_restart_dialog = ConfirmationDialog.new()
+	_restart_dialog.dialog_autowrap = true
 	_restart_dialog.title = "Start a new duel?"
 	_restart_dialog.dialog_text = "The current duel will end without saving. Start with a new shuffle?"
 	_restart_dialog.confirmed.connect(func(): seed_value += 1; start_new_duel())
 	add_child(_restart_dialog)
 	_surrender_dialog = ConfirmationDialog.new()
+	_surrender_dialog.dialog_autowrap = true
 	_surrender_dialog.title = "Surrender this duel?"
 	_surrender_dialog.dialog_text = "Your opponent will win. This cannot be undone."
 	_surrender_dialog.confirmed.connect(func():
@@ -256,29 +301,34 @@ func _build_cover() -> void:
 	var center := CenterContainer.new()
 	_cover.add_child(center)
 	var column := VBoxContainer.new()
+	_cover_column = column
 	column.custom_minimum_size.x = 600
 	column.add_theme_constant_override("separation", 24)
 	center.add_child(column)
-	var emblem := _label("◇", 90, TEAL)
+	var emblem := _label("II", 66, TEAL)
 	emblem.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	column.add_child(emblem)
-	var title := _label("DUEL ARENA", 40)
+	var title := _label("DUEL ARENA", 34)
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	column.add_child(title)
 	_cover_title = _label("", 24, TEAL)
 	_cover_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_cover_title.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	column.add_child(_cover_title)
-	var note := _label("Pass the screen privately.\nReveal only when the named player is ready.", 18, MUTED)
+	var note := _label("A private view for each player.\nPass the screen, then reveal when you are ready.", 16, MUTED)
+	note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	note.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	column.add_child(note)
 	_reveal = _button("I am ready — reveal my board", reveal_board)
 	_reveal.custom_minimum_size.y = 62
 	column.add_child(_reveal)
-	column.add_child(_button("New duel", func(): _restart_dialog.popup_centered(Vector2i(500, 180))))
+	column.add_child(_button("New duel", func(): _popup_confirmation(_restart_dialog)))
 
 func _show_cover(title: String) -> void:
 	_animations.conceal()
+	_active_tab = 0
 	_content.hide()
+	_tabs.hide()
 	_cover.show()
 	_cover_title.text = title
 	_reveal.disabled = current.is_empty() and view.is_empty()
@@ -294,6 +344,7 @@ func reveal_board() -> void:
 	handoff_required = false
 	_cover.hide()
 	_content.show()
+	_apply_layout()
 	_render()
 
 func _render() -> void:
@@ -304,6 +355,7 @@ func _render() -> void:
 	_status.text = status_line
 	_render_board()
 	_animations.present(viewer)
+	_animations.visible = not _compact_layout or _active_tab == 0
 	_render_actions()
 	if viewer >= 0:
 		var recent: Array = (logs[viewer] as Array).slice(-10)
@@ -318,12 +370,12 @@ func _render_board() -> void:
 	var own: Dictionary = players[viewer]
 	var opponent: Dictionary = players[1 - viewer]
 	_board.add_child(_player_header(opponent, CORAL, false))
-	var backs := HBoxContainer.new()
-	backs.alignment = BoxContainer.ALIGNMENT_CENTER
+	var backs := HFlowContainer.new()
+	backs.alignment = FlowContainer.ALIGNMENT_CENTER
 	for card in opponent.get("hand", []):
 		var face := CardFace.new()
 		face.configure(card, CORAL, true, _category(card))
-		face.custom_minimum_size = Vector2(32, 44) if bool(card.get("hidden", true)) else Vector2(100, 110)
+		face.custom_minimum_size = Vector2(26, 36) if bool(card.get("hidden", true)) else Vector2(90, 100)
 		face.disabled = bool(card.get("hidden", true))
 		if not face.disabled: face.pressed.connect(_inspect.bind(card))
 		backs.add_child(face)
@@ -331,15 +383,16 @@ func _render_board() -> void:
 	_render_side(opponent, CORAL, true)
 	var phases := HBoxContainer.new()
 	phases.alignment = BoxContainer.ALIGNMENT_CENTER
-	phases.add_theme_constant_override("separation", 12)
-	phases.add_child(_label("TURN %02d" % int(view.get("turn", 0)), 14, TEAL))
-	var phase_labels := ["DRAW", "STANDBY", "MAIN 1", "BATTLE", "MAIN 2", "END"]
+	phases.add_theme_constant_override("separation", 6)
+	phases.add_child(_label(("T%02d" if _narrow_board else "TURN %02d") % int(view.get("turn", 0)), 13, TEAL))
+	var phase_labels := ["D", "S", "M1", "B", "M2", "E"] if _narrow_board else ["DRAW", "STANDBY", "MAIN 1", "BATTLE", "MAIN 2", "END"]
 	for i in range(phase_labels.size()):
 		var panel := PanelContainer.new()
 		var active := int(view.get("phase", -1)) == i
-		panel.add_theme_stylebox_override("panel", _box(Color("23443f") if active else Color("111c29"),
+		panel.add_theme_stylebox_override("panel", _box(Color("274d48") if active else Color("111f2d"),
 			TEAL if active else Color("273546"), 7))
-		panel.add_child(_label(phase_labels[i], 12, TEAL if active else MUTED))
+		panel.tooltip_text = ["Draw", "Standby", "Main 1", "Battle", "Main 2", "End"][i]
+		panel.add_child(_label(("• " if active else "") + phase_labels[i], 11, Color("e4fff5") if active else MUTED))
 		phases.add_child(panel)
 	_board.add_child(phases)
 	var chain: Array = view.get("chain", [])
@@ -348,40 +401,66 @@ func _render_board() -> void:
 	_render_side(own, TEAL, false)
 	_board.add_child(_player_header(own, TEAL, true))
 	var hand_scroll := ScrollContainer.new()
-	hand_scroll.custom_minimum_size.y = 186
+	hand_scroll.custom_minimum_size.y = 154
 	hand_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	_board.add_child(hand_scroll)
 	var hand := HBoxContainer.new()
 	hand.add_theme_constant_override("separation", 10)
+	hand.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	hand.alignment = BoxContainer.ALIGNMENT_CENTER
 	hand_scroll.add_child(hand)
 	for card in own.get("hand", []): hand.add_child(_card(card, TEAL, false))
 
 func _player_header(player: Dictionary, color: Color, own: bool) -> Control:
 	var panel := PanelContainer.new()
-	panel.add_theme_stylebox_override("panel", _box(Color("13202e"), Color(color, 0.25), 10))
+	panel.add_theme_stylebox_override("panel", _box(Color("122735"), Color(color, 0.30), 6))
 	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 14)
 	panel.add_child(row)
 	var labels := VBoxContainer.new()
 	labels.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	row.add_child(labels)
-	labels.add_child(_label(("YOU  /  " if own else "OPPONENT  /  ") + str(player.get("name", "")), 15, color))
-	labels.add_child(_label(str(player.get("deck_name", "")), 12, MUTED))
-	row.add_child(_label("%s  LP" % str(player.get("life_points", 0)), 29, color))
+	var is_turn := int(view.get("turn_player", -1)) == int(player.get("id", -2))
+	var title := _label(("YOU" if own else "OPPONENT") + ("  ·  TURN" if is_turn else "") + "  /  " + str(player.get("name", "")), 13, color)
+	title.clip_text = true
+	labels.add_child(title)
+	var deck_name := _label(str(player.get("deck_name", "")), 11, MUTED)
+	deck_name.clip_text = true
+	labels.add_child(deck_name)
+	var life := VBoxContainer.new()
+	life.custom_minimum_size.x = 110 if _narrow_board else 145
+	row.add_child(life)
+	var points := _label("%s  LP" % str(player.get("life_points", 0)), 21 if _narrow_board else 25, Color("f1f4ed"))
+	points.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	life.add_child(points)
+	var meter := ProgressBar.new()
+	meter.custom_minimum_size.y = 4
+	meter.show_percentage = false
+	meter.max_value = maxf(8000, float(player.get("life_points", 0)))
+	meter.value = float(player.get("life_points", 0))
+	meter.add_theme_stylebox_override("background", _box(Color("081923"), Color("081923"), 0))
+	meter.add_theme_stylebox_override("fill", _box(color, color, 0))
+	life.add_child(meter)
 	return panel
 
 func _render_side(player: Dictionary, color: Color, opposing: bool) -> void:
-	var side := HBoxContainer.new()
+	var side := BoxContainer.new()
+	side.vertical = _narrow_board
 	side.alignment = BoxContainer.ALIGNMENT_CENTER
-	side.add_theme_constant_override("separation", 12)
+	side.add_theme_constant_override("separation", 8)
 	_board.add_child(side)
-	var support := VBoxContainer.new()
+	var support := BoxContainer.new()
+	support.vertical = not _narrow_board
+	support.alignment = BoxContainer.ALIGNMENT_CENTER
 	support.add_theme_constant_override("separation", 8)
 	side.add_child(support)
-	support.add_child(_zone(player.get("field_zone"), "FIELD", color))
+	var field := _zone(player.get("field_zone"), "FIELD", color)
+	if _narrow_board and not player.get("field_zone") is Dictionary: field.custom_minimum_size = Vector2(_narrow_pile_width, 58)
+	support.add_child(field)
 	var deck_panel := PanelContainer.new()
-	deck_panel.custom_minimum_size = Vector2(100, 110)
-	deck_panel.add_theme_stylebox_override("panel", _box(Color("111b2a"), Color(color, 0.25), 12))
-	var deck_label := _label("◇\nDECK\n%d" % int(player.get("deck_count", 0)), 17, color)
+	deck_panel.custom_minimum_size = Vector2(_narrow_pile_width, 58) if _narrow_board else Vector2(90, 100)
+	deck_panel.add_theme_stylebox_override("panel", _box(Color("111b2a"), Color(color, 0.25), 8 if _narrow_board else 12))
+	var deck_label := _label("DECK\n%d" % int(player.get("deck_count", 0)), 14 if _narrow_board else 18, color)
 	deck_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	deck_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	deck_panel.add_child(deck_label)
@@ -401,24 +480,31 @@ func _render_side(player: Dictionary, color: Color, opposing: bool) -> void:
 			var zone := _zone(data, ("MONSTER " if key == "monster_zones" else "SPELL / TRAP ") + str(i + 1), color)
 			row.add_child(zone)
 			if key == "monster_zones": _animations.register_zone(int(player.get("id", -1)), i, zone)
-	var piles := VBoxContainer.new()
+	var piles := BoxContainer.new()
+	piles.vertical = not _narrow_board
 	piles.add_theme_constant_override("separation", 8)
-	side.add_child(piles)
+	if _narrow_board: support.add_child(piles)
+	else: side.add_child(piles)
 	for pile in ["graveyard", "banished"]:
 		var entries: Array = player.get(pile, [])
-		var button := _button(("GRAVEYARD" if pile == "graveyard" else "BANISHED") + "\n%d" % entries.size(),
+		var pile_label := ("GY" if pile == "graveyard" else "BANISH") if _narrow_board else ("GRAVEYARD" if pile == "graveyard" else "BANISHED")
+		var button := _button(pile_label + "\n%d" % entries.size(),
 			_show_pile.bind(entries, pile.capitalize()))
-		button.add_theme_font_size_override("font_size", 12)
-		button.custom_minimum_size = Vector2(100, 110)
+		button.add_theme_font_size_override("font_size", 10)
+		button.custom_minimum_size = Vector2(_narrow_pile_width, 58) if _narrow_board else Vector2(90, 100)
 		button.alignment = HORIZONTAL_ALIGNMENT_CENTER
 		piles.add_child(button)
 
 func _zone(data, caption: String, color: Color) -> Control:
 	if data is Dictionary: return _card(data, color, true)
 	var panel := PanelContainer.new()
-	panel.custom_minimum_size = Vector2(100, 110)
-	panel.add_theme_stylebox_override("panel", _box(Color(0.08, 0.14, 0.20, 0.42), Color(color, 0.18), 6))
-	var label := _label("◇\n" + caption, 10, Color(color, 0.45))
+	panel.custom_minimum_size = Vector2(_narrow_slot_width, 96) if _narrow_board else Vector2(90, 100)
+	panel.add_theme_stylebox_override("panel", _box(Color(0.08, 0.17, 0.22, 0.70), Color(color, 0.26), 5))
+	var zone_caption := caption.replace(" ", "\n") if caption.begins_with("MONSTER") else caption.replace("SPELL / TRAP ", "SPELL / TRAP\n")
+	if _narrow_board: zone_caption = zone_caption.replace("SPELL / TRAP", "S / T")
+	if _narrow_slot_width < 55 and _narrow_board: zone_caption = zone_caption.replace("MONSTER", "M")
+	panel.tooltip_text = caption
+	var label := _label(zone_caption, 9 if _narrow_board else 10, Color(color, 0.75))
 	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	panel.add_child(label)
@@ -427,12 +513,14 @@ func _zone(data, caption: String, color: Color) -> Control:
 func _card(data: Dictionary, color: Color, compact: bool) -> Control:
 	var face := CardFace.new()
 	face.configure(data, color, compact, _category(data))
+	if compact and _narrow_board: face.custom_minimum_size = Vector2(_narrow_slot_width, 96)
 	face.pressed.connect(_inspect.bind(data))
 	return face
 
 func _inspect(data: Dictionary) -> void:
 	if handoff_required: return
 	_clear(_inspector)
+	if _compact_layout: _select_tab(2)
 	if bool(data.get("hidden", true)):
 		_inspector.add_child(_label("Face-down card", 24))
 		_inspector.add_child(_label("This card's identity is hidden\nfrom your current view.", 16, MUTED))
@@ -458,6 +546,7 @@ func _inspect(data: Dictionary) -> void:
 func _show_pile(entries: Array, title: String) -> void:
 	if handoff_required: return
 	_clear(_inspector)
+	if _compact_layout: _select_tab(2)
 	_inspector.add_child(_label(title, 24))
 	if entries.is_empty(): _inspector.add_child(_label("No cards here yet.", 16, MUTED))
 	for entry in entries:
@@ -465,6 +554,7 @@ func _show_pile(entries: Array, title: String) -> void:
 
 func _render_actions() -> void:
 	_clear(_choices)
+	(_tabs.get_child(1) as Button).text = "Moves" if current.is_empty() else "Moves •"
 	if current.is_empty():
 		_mode.text = "DUEL COMPLETE" if finished else "RESOLVING"
 		_prompt.text = "Duel complete" if finished else "Waiting for the engine…"
@@ -508,7 +598,7 @@ func _begin_offer(offer: Dictionary) -> void:
 	if str(offer.get("kind", "")) == "SURRENDER":
 		_surrender_prompt = int(current["prompt_id"])
 		_surrender_offer = int(offer["index"])
-		_surrender_dialog.popup_centered(Vector2i(500, 180))
+		_popup_confirmation(_surrender_dialog)
 		return
 	_reset_choice()
 	_pending_offer = offer
@@ -681,13 +771,73 @@ static func _button(caption: String, action: Callable) -> Button:
 	button.text = caption
 	button.alignment = HORIZONTAL_ALIGNMENT_LEFT
 	button.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	button.custom_minimum_size.y = 45
+	button.custom_minimum_size.y = 48
 	button.add_theme_font_size_override("font_size", 15)
 	button.add_theme_color_override("font_color", Color("dce9f2"))
 	button.add_theme_stylebox_override("normal", _box(Color("17283b"), Color("2e4459"), 10))
 	button.add_theme_stylebox_override("hover", _box(Color("234253"), TEAL, 10))
 	button.add_theme_stylebox_override("pressed", _box(Color("27544e"), TEAL, 10))
+	button.add_theme_stylebox_override("disabled", _box(Color("14202d"), Color("273746"), 10))
+	button.add_theme_color_override("font_disabled_color", Color("8c9caa"))
 	button.add_theme_stylebox_override("focus", _box(Color(0, 0, 0, 0), TEAL, 10))
 	button.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 	button.pressed.connect(action)
 	return button
+
+func _sync_window_layout() -> void:
+	var window := get_window()
+	# Preserve native-sized touch targets in small windows, cap the desktop design scale.
+	var logical := Vector2i(mini(1920, window.size.x), mini(1080, window.size.y))
+	if logical.x < 1 or logical.y < 1: return
+	if window.content_scale_size != logical: window.content_scale_size = logical
+	var narrow_before := _narrow_board
+	_compact_layout = logical.x < 1450
+	_narrow_board = logical.x < 700
+	_narrow_slot_width = minf(64, maxf(48, (logical.x - 64.0) / 5.0))
+	_narrow_pile_width = minf(80, maxf(60, (logical.x - 56.0) / 4.0))
+	_right_panel.custom_minimum_size.x = 0 if _compact_layout else 310
+	_prompt.custom_minimum_size.x = maxf(180, logical.x - 80) if _narrow_board else 270
+	_toolbar.custom_minimum_size.x = 420 if not _narrow_board else 0
+	_cover_column.custom_minimum_size.x = minf(600, logical.x - 48)
+	for side in ["left", "right", "top", "bottom"]:
+		_margin.add_theme_constant_override("margin_" + side, 12 if _compact_layout else 20)
+	_header.vertical = logical.x < 700
+	_descriptor.visible = not _compact_layout
+	_footer.visible = logical.y >= 700 and logical.x >= 700
+	_apply_layout()
+	if (narrow_before != _narrow_board or _narrow_board) and not handoff_required: _render_board()
+
+func _select_tab(index: int) -> void:
+	_active_tab = clampi(index, 0, 2)
+	_apply_layout()
+
+func _apply_layout() -> void:
+	_tabs.visible = _compact_layout and not handoff_required
+	_left_panel.visible = not _compact_layout or _active_tab == 2
+	_middle_scroll.visible = not _compact_layout or _active_tab == 0
+	_right_panel.visible = not _compact_layout or _active_tab == 1
+	_left_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL if _compact_layout else Control.SIZE_FILL
+	_right_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL if _compact_layout else Control.SIZE_FILL
+	if _animations != null:
+		_animations.visible = not handoff_required and (not _compact_layout or _active_tab == 0)
+	for i in range(_tabs.get_child_count()):
+		var button := _tabs.get_child(i) as Button
+		button.add_theme_stylebox_override("normal", _box(Color("234b47") if i == _active_tab else Color("17283b"), TEAL if i == _active_tab else Color("2e4459"), 10))
+
+func _popup_confirmation(dialog: ConfirmationDialog) -> void:
+	dialog.dialog_autowrap = true
+	dialog.popup_centered(Vector2i(mini(500, int(get_viewport_rect().size.x) - 32), 180))
+
+func _load_presentation_preferences() -> void:
+	var preferences := ConfigFile.new()
+	if preferences.load("user://presentation.cfg") != OK: return
+	var reduced := bool(preferences.get_value("accessibility", "reduced_motion", false))
+	_motion_button.set_pressed_no_signal(reduced)
+	_animations.set_reduced_motion(reduced)
+
+func _set_reduced_motion(enabled: bool) -> void:
+	_animations.set_reduced_motion(enabled)
+	var preferences := ConfigFile.new()
+	preferences.set_value("accessibility", "reduced_motion", enabled)
+	var error := preferences.save("user://presentation.cfg")
+	if error != OK: push_warning("Could not save the reduced-motion preference: %s" % error_string(error))

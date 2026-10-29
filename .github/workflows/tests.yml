@@ -97,6 +97,9 @@ jobs:
       - name: Playable board and privacy-flow check
         run: bash ./Tools/run_tests.sh SceneBoardCheck
 
+      - name: Responsive board and accessibility preferences
+        run: bash ./Tools/run_tests.sh SceneVisualCheck
+
       - name: Event-driven card animation checks
         run: bash ./Tools/run_tests.sh SceneAnimationCheck
 

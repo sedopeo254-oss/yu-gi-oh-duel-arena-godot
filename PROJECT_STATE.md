@@ -1,5 +1,11 @@
 # PROJECT_STATE — Duel Arena
 
+> **2026-10-29 presentation update:** The playable board now has responsive desktop/phone
+> layouts, original category illustrations, LP meters and persistent reduced motion.
+> Read [`docs/ARENA_PRESENTATION.md`](docs/ARENA_PRESENTATION.md) and
+> [`docs/PLAYABLE_BOARD.md`](docs/PLAYABLE_BOARD.md) for the current implementation.
+> The unit-A tables below are historical; they do not describe the current F5 scene.
+
 > Persistent resume file. A new Claude Code session should read **this file first**,
 > then read only the targeted files named in §8. Do **not** recursively reread the repository.
 
