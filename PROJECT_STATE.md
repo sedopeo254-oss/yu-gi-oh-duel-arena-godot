@@ -6,6 +6,16 @@
 > [`docs/PLAYABLE_BOARD.md`](docs/PLAYABLE_BOARD.md) for the current implementation.
 > The unit-A tables below are historical; they do not describe the current F5 scene.
 
+## Bounded native practice-pool expansion — 2026-10-29
+
+The lab now selects between its unchanged Newdoria Lua scenario and two
+40-card, relaxed-copy practice presets using six existing low-level Normal
+Monsters. A strict offline metadata importer and explicit authored-script hash
+manifest replace implicit admission. Native Set/Flip/position choices, seeded
+host deck shuffling and owner-only hand projections are tested; no general card
+DB, arbitrary Lua loader or legal-deck claim. See `docs/OCG_PRACTICE_POOL.md` and
+`Reports/OCG_PRACTICE_RESULTS.md`. Original arena engine/presentation is preserved.
+
 ## Optional core lab integration — 2026-10-29
 
 The responsive, audio-enabled arena now has a guarded **Core lab** entry and

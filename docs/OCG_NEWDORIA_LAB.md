@@ -6,6 +6,14 @@ Godot UI. **The original `EngineSession`, playable board, card roster, main
 scene and existing effects are unchanged.** This is not a full YGOPro client,
 a merge of incompatible cores, or a complete real-deck implementation.
 
+## Additional selectable practice mode
+
+The same lab now offers [six reviewed real Normal Monsters](OCG_PRACTICE_POOL.md)
+with empty-field starting positions, private hand identities, Set/Flip/position
+choices and two seeded practice presets. That later mode is distinct from this
+page's unchanged Newdoria arranged-board scenario; its copy limits are explicitly
+relaxed and it is not a complete legal-deck backend.
+
 ## Integrated arena entry
 
 The responsive, audio-enabled arena remains the normal startup scene. **Core lab**

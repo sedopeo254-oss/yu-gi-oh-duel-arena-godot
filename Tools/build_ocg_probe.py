@@ -18,6 +18,7 @@ import subprocess
 import sys
 import tarfile
 import urllib.request
+from import_ocg_cards import load_pool, reviewed_script
 
 ROOT = Path(__file__).resolve().parents[1]
 CACHE = ROOT / ".cache/ocg"
@@ -83,14 +84,22 @@ def generate_card_fixture(root: Path, destination: Path) -> None:
         if any(type(card.get(key)) is not int for key in ("level", "attack", "defense")) or card.get("level") != 4 or card.get("race") != "Fiend":
             raise ValueError("reference fixture has an unsupported level or race")
         subtype = "TYPE_NORMAL" if category == "Normal Monster" else "TYPE_EFFECT"
-        rows.append(f"{{{code}u, TYPE_MONSTER | {subtype}, 4, ATTRIBUTE_{attribute}, RACE_FIEND, {attack}, {defense}}}")
-    script = (root / "Tools/ocg/lua/c4335645.lua").read_text()
+        rows.append(f"{{{code}u, TYPE_MONSTER | {subtype}, 4, ATTRIBUTE_{attribute}, RACE_FIEND, {attack}, {defense}, 0}}")
+    script = reviewed_script(root)
     digest = hashlib.sha256(script.encode()).hexdigest()
     checks = (root / "Tools/ocg/lua/test_newdoria.lua").read_text()
+    pool, pool_digest = load_pool(root)
+    practice_rows = []
+    for card in pool:
+        race = card["race"].replace("-", "").upper()
+        tuner = " | TYPE_TUNER" if card["tuner"] else ""
+        practice_rows.append(f"{{{card['code']}u, TYPE_MONSTER | TYPE_NORMAL{tuner}, {card['level']}, ATTRIBUTE_{card['attribute']}, RACE_{race}, {card['attack']}, {card['defense']}, {card['setcode']}}}")
     destination.write_text(
         "// Generated from reviewed project-owned inputs; do not edit.\n#pragma once\n"
-        "struct ReferenceCardRow { uint32_t code, type, level, attribute, race; int32_t attack, defense; };\n"
+        "struct ReferenceCardRow { uint32_t code, type, level, attribute, race; int32_t attack, defense; uint64_t setcode; };\n"
         "static const ReferenceCardRow REFERENCE_CARDS[] = {" + ",".join(rows) + "};\n"
+        "static const ReferenceCardRow PRACTICE_CARDS[] = {" + ",".join(practice_rows) + "};\n"
+        "static const char PRACTICE_POOL_SHA256[] = \"" + pool_digest + "\";\n"
         "static const char NEWDORIA_LUA[] = " + json.dumps(script) + ";\n"
         "static const char NEWDORIA_CHECKS[] = " + json.dumps(checks) + ";\n"
         "static const char NEWDORIA_LUA_SHA256[] = \"" + digest + "\";\n"

@@ -222,7 +222,7 @@ func _build_layout() -> void:
 	toolbar.add_child(restart_button)
 	var native_button := _button("Core lab", _request_native_lab)
 	native_button.custom_minimum_size.x = 120
-	native_button.tooltip_text = "Optional Linux experiment: two real card records, one Lua effect, synthetic decks. Not the arena backend."
+	native_button.tooltip_text = "Optional Linux lab: Newdoria Lua scenario or six-card Normal Monster practice pool. Not the arena backend."
 	toolbar.add_child(native_button)
 	_tabs = HBoxContainer.new()
 	_tabs.add_theme_constant_override("separation", 8)
@@ -362,7 +362,7 @@ func _build_native_navigation() -> void:
 	_native_dialog = ConfirmationDialog.new()
 	_native_dialog.title = "Open experimental native lab?"
 	_native_dialog.dialog_autowrap = true
-	_native_dialog.dialog_text = "This ends your current arena duel without saving. The lab uses two real card records, one Newdoria Lua effect, and synthetic decks. Returning starts a new arena duel."
+	_native_dialog.dialog_text = "This ends your current arena duel without saving. Experimental modes: Newdoria Lua scenario or six Normal Monster practice pool. Copy limits are relaxed. Returning starts a new arena duel."
 	_native_dialog.get_ok_button().text = "End duel and open lab"
 	_native_dialog.confirmed.connect(_open_native_lab)
 	add_child(_native_dialog)

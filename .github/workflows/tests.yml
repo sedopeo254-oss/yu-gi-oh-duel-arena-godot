@@ -84,11 +84,14 @@ jobs:
       - name: Native core and Godot adapter checks
         run: |
           python3 Tools/ocg/test_probe.py
+          python3 Tools/ocg/test_practice.py
           bash ./Tools/run_tests.sh RunOcgCoreTests
           bash ./Tools/run_tests.sh RunOcgSessionTests
           bash ./Tools/run_tests.sh RunOcgNewdoriaTests
           bash ./Tools/run_tests.sh SceneOcgBattleLabCheck
           bash ./Tools/run_tests.sh SceneCoreNavigationCheck
+          bash ./Tools/run_tests.sh RunOcgPracticeTests
+          bash ./Tools/run_tests.sh SceneOcgPracticeCheck
 
       # A suite that fails to COMPILE would otherwise hang the headless SceneTree
       # forever, so the runner does a --check-only pass first and exits 1 on any parse

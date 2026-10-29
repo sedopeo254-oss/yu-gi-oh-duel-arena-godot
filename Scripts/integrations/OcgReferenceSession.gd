@@ -5,11 +5,15 @@ extends RefCounted
 ## Fixture-only: not a drop-in EngineSession, not production-board selectable.
 ## start_fixture(), poll(viewer), submit(player, prompt_id, {offer: index}), stop().
 ## start_newdoria_fixture() adds one authored Lua effect and viewer-filtered battle views.
-## Real decks, arbitrary scripts and the full core protocol remain unsupported.
+## start_practice_deck() adds reviewed Normal Monsters, private hands and setting.
+## Production decks, arbitrary scripts and the full core protocol remain unsupported.
 
 const MAX_PACKET_BYTES := 16384
 const RESPONSE_TIMEOUT_MS := 11000
 const ALLOWED_CHOICES := ["normal_summon", "choose_zone", "end_turn", "shuffle_hand", "discard"]
+const PRACTICE_CHOICES := ["set_monster", "reposition", "choose_position"]
+const PRACTICE_CODES := [7459013, 11091375, 21615956, 37265642, 43096270, 90582719]
+const POOL_PATH := "res://Data/reference_cards/native_pool.json"
 const BATTLE_CHOICES := ["battle_phase", "attack", "select_monster", "chain_effect", "pass_chain", "main_two"]
 
 var _owner := OS.get_thread_caller_id()
@@ -29,6 +33,8 @@ var _last_error := ""
 var _over_viewers: Array = []
 var _terminal_reports: Array = []
 var _real_cards := false
+var _practice_profile := ""
+var _pool_digest := ""
 
 
 func _notification(what: int) -> void:
@@ -51,7 +57,14 @@ func start_newdoria_fixture(seed: int = 42) -> bool:
 	return _start(seed, true)
 
 
-func _start(seed: int, real_cards: bool) -> bool:
+func start_practice_deck(profile: String = "mixed", seed: int = 42) -> bool:
+	if not profile in ["mixed", "dragons"]:
+		_last_error = "Unsupported practice deck profile."
+		return false
+	return _start(seed, true, profile)
+
+
+func _start(seed: int, real_cards: bool, practice_profile: String = "") -> bool:
 	if OS.get_thread_caller_id() != _owner or _started or _terminal:
 		return false
 	if seed < 0 or seed > 4294967295 or not OcgCoreDiagnostic.is_available():
@@ -69,8 +82,16 @@ func _start(seed: int, real_cards: bool) -> bool:
 		_last_error = "Invalid pinned core revision."
 		return false
 	_real_cards = real_cards
+	_practice_profile = practice_profile
+	var arguments := PackedStringArray(["--newdoria-session" if real_cards else "--session", "--seed", str(seed)])
+	if not practice_profile.is_empty():
+		_pool_digest = FileAccess.get_sha256(POOL_PATH)
+		if _pool_digest.length() != 64:
+			_last_error = "Cannot read the approved native practice pool."
+			return false
+		arguments = PackedStringArray(["--practice-session", "--seed", str(seed), "--deck", practice_profile])
 	var process := OS.execute_with_pipe(ProjectSettings.globalize_path(OcgCoreDiagnostic.BINARY_PATH),
-		PackedStringArray(["--newdoria-session" if real_cards else "--session", "--seed", str(seed)]), false)
+		arguments, false)
 	if process.is_empty():
 		_last_error = "Could not launch the isolated core process."
 		return false
@@ -207,7 +228,9 @@ func _accept_line(line: String) -> bool:
 		return false
 	var allowed := ["schema_version", "core_revision", "fixture_only", "type", "player"]
 	match kind:
-		"ready": allowed.append("capabilities")
+		"ready":
+			allowed.append("capabilities")
+			if not _practice_profile.is_empty(): allowed.append_array(["pool_sha256", "deck_profile"])
 		"prompt": allowed.append_array(["prompt_id", "mode", "offers", "view"])
 		"rejected": allowed.append_array(["prompt_id", "reason"])
 		"over": allowed.append_array(["winner", "reason_code", "view"])
@@ -224,6 +247,11 @@ func _accept_line(line: String) -> bool:
 		if _real_cards:
 			capabilities.append_array(BATTLE_CHOICES)
 			capabilities.append("life_point_win")
+		if not _practice_profile.is_empty():
+			capabilities.append_array(PRACTICE_CHOICES)
+			if message.get("pool_sha256") != _pool_digest or message.get("deck_profile") != _practice_profile:
+				_fail("Native pool/profile differs from the selected approved metadata; rebuild the binary.")
+				return false
 		if _ready or message.get("player") != -1 or message.get("capabilities") != capabilities:
 			_fail("Native session capabilities mismatch.")
 			return false
@@ -233,7 +261,7 @@ func _accept_line(line: String) -> bool:
 		_fail("Native session message has no valid player.")
 		return false
 	var player := int(message.player)
-	if kind in ["prompt", "over"] and not _valid_view(message.get("view"), _real_cards, player):
+	if kind in ["prompt", "over"] and not _valid_view(message.get("view"), _real_cards, player, not _practice_profile.is_empty()):
 		_fail("Native snapshot does not match the selected fixture shape.")
 		return false
 	if kind in ["prompt", "rejected"]:
@@ -249,7 +277,7 @@ func _accept_line(line: String) -> bool:
 			if not offer is Dictionary or offer.size() != 2 or not offer.get("label") is String:
 				_fail("Native session offered an unsupported action.")
 				return false
-			if not offer.get("kind") in ALLOWED_CHOICES and not (_real_cards and offer.get("kind") in BATTLE_CHOICES):
+			if not offer.get("kind") in ALLOWED_CHOICES and not (_real_cards and offer.get("kind") in BATTLE_CHOICES) and not (not _practice_profile.is_empty() and offer.get("kind") in PRACTICE_CHOICES):
 				_fail("Native session action exceeds selected fixture capabilities.")
 				return false
 	elif kind == "rejected":
@@ -262,7 +290,7 @@ func _accept_line(line: String) -> bool:
 			return false
 		if not _terminal_reports.is_empty():
 			var previous: Dictionary = _terminal_reports[0]
-			if message.winner != previous.winner or message.reason_code != previous.reason_code or not _matching_terminal_views(message.view, previous.view, _real_cards):
+			if message.winner != previous.winner or message.reason_code != previous.reason_code or not _matching_terminal_views(message.view, previous.view, _real_cards, not _practice_profile.is_empty()):
 				_fail("Native terminal reports disagree between players.")
 				return false
 		_over_viewers.append(player)
@@ -280,7 +308,7 @@ func _accept_line(line: String) -> bool:
 	return true
 
 
-static func _valid_view(value: Variant, real_cards: bool = false, viewer: int = -1) -> bool:
+static func _valid_view(value: Variant, real_cards: bool = false, viewer: int = -1, practice: bool = false) -> bool:
 	if not value is Dictionary or value.size() != (5 if real_cards else 4):
 		return false
 	if real_cards and value.get("viewer") != viewer:
@@ -294,10 +322,10 @@ static func _valid_view(value: Variant, real_cards: bool = false, viewer: int = 
 		return false
 	for pid in 2:
 		var player: Variant = value.players[pid]
-		if not player is Dictionary or player.size() != (6 if real_cards else 4):
+		if not player is Dictionary or player.size() != (7 if practice else (6 if real_cards else 4)):
 			return false
 		for key in ["deck_count", "hand_count", "monster_count", "graveyard_count"]:
-			var maximum := 5 if key == "monster_count" else (41 if real_cards and key == "graveyard_count" else 40)
+			var maximum := 5 if key == "monster_count" else (41 if real_cards and not practice and key == "graveyard_count" else 40)
 			if not _whole_number(player.get(key), 0, maximum):
 				return false
 		if real_cards:
@@ -318,18 +346,30 @@ static func _valid_view(value: Variant, real_cards: bool = false, viewer: int = 
 					return false
 				if should_know and (not _whole_number(card.get("code"), 1, 4294967295) or not _whole_number(card.get("attack"), -1, 100000) or not _whole_number(card.get("defense"), -1, 100000)):
 					return false
+				if practice and should_know and not int(card.code) in PRACTICE_CODES:
+					return false
+			if practice:
+				if not player.get("hand") is Array or player.hand.size() != (int(player.hand_count) if pid == viewer else 0):
+					return false
+				for slot in player.hand.size():
+					var card: Variant = player.hand[slot]
+					if not card is Dictionary or card.size() != 4 or not _whole_number(card.get("slot"), slot, slot):
+						return false
+					if not _whole_number(card.get("code"), 1, 4294967295) or not int(card.code) in PRACTICE_CODES or not _whole_number(card.get("attack"), 0, 100000) or not _whole_number(card.get("defense"), 0, 100000):
+						return false
 			if occupied != player.monster_count:
 				return false
 	return true
 
 
-static func _matching_terminal_views(a: Dictionary, b: Dictionary, real_cards: bool) -> bool:
+static func _matching_terminal_views(a: Dictionary, b: Dictionary, real_cards: bool, practice: bool = false) -> bool:
 	if not real_cards:
 		return a == b
 	var copies := [a.duplicate(true), b.duplicate(true)]
 	for value in copies:
 		value.erase("viewer")
 		for player in value.players:
+			if practice: player.hand = []
 			for slot in 5:
 				var card: Variant = player.monsters[slot]
 				if card != null and int(card.position) in [2, 8]:

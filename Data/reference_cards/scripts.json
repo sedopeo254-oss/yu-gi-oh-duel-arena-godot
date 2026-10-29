@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "scripts": [
+    {
+      "code": 4335645,
+      "path": "Tools/ocg/lua/c4335645.lua",
+      "sha256": "0a26731b4681e555ed0e0a98c9a964295562c0b842565e83507e066dbddfe3dc"
+    }
+  ]
+}

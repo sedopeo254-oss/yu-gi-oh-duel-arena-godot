@@ -1,7 +1,8 @@
 // Optional Fluorohydride-core diagnostic, not the game's authoritative backend.
 // Protocol source: pinned common.h, playerop.cpp and operations.cpp (see lock.json).
-// Defaults to synthetic Normal Monsters; --newdoria modes admit two reviewed
-// real cards and one project-authored Lua effect. No arbitrary decks/scripts.
+// Defaults to synthetic Normal Monsters. Newdoria modes admit two reviewed cards
+// and one owned Lua effect; practice mode uses six reviewed Normal Monsters.
+// No arbitrary executable scripts, external database, or tournament deck claim.
 #include "ocgapi.h"
 #include "card_data.h"
 #include "effect.h"
@@ -11,6 +12,7 @@
 #include <iomanip>
 #include <iostream>
 #include <limits>
+#include <random>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -128,6 +130,7 @@ struct Probe {
     int winner = -1;
     int win_reason = 0;
     bool allow_battle_effects = false;
+    bool practice_mode = false;
     int attacks = 0;
     int chains_solved = 0;
     int damage_start = 0;
@@ -162,6 +165,15 @@ struct Probe {
                 moves.push_back({code, from, to, reason});
                 break;
             }
+            case MSG_SET:
+            case MSG_FLIPSUMMONING:
+                require(practice_mode, "set/flip is outside this scenario");
+                r.skip(8); break;
+            case MSG_FLIPSUMMONED:
+                require(practice_mode, "flip is outside this scenario"); break;
+            case MSG_POS_CHANGE:
+                require(practice_mode, "position changes are outside this scenario");
+                r.skip(9); break;
             case MSG_SUMMONING: r.skip(8); break;
             case MSG_SUMMONED: ++summoned; break;
             case MSG_ATTACK:
@@ -211,7 +223,7 @@ struct Probe {
                     auto count = r.read(1);
                     if (group == 0) prompt.summonable = count;
                     for (uint32_t index = 0; index < count; ++index) {
-                        r.skip(4); // Core card code stays inside the trusted process.
+                        const auto code = r.read(4); // Only owner-visible snapshots expose hand identity.
                         const auto controller = r.read(1);
                         const auto location = r.read(1);
                         const auto sequence = r.read(1);
@@ -220,6 +232,14 @@ struct Probe {
                                     "unsupported normal summon candidate location");
                             prompt.choices.push_back({"normal_summon", "Normal Summon from hand slot " +
                                 std::to_string(sequence + 1), int32_t(index << 16), {}});
+                        }
+                        if (practice_mode && (group == 2 || group == 3)) {
+                            require(controller == uint32_t(prompt.player) && location == (group == 2 ? LOCATION_MZONE : LOCATION_HAND),
+                                    "unsupported position/set candidate location");
+                            prompt.choices.push_back({group == 2 ? "reposition" : "set_monster",
+                                group == 2 ? "Change position / Flip Summon monster zone " + std::to_string(sequence + 1)
+                                           : "Set face-down from hand slot " + std::to_string(sequence + 1),
+                                int32_t((index << 16) | group), {}, code, controller | (location << 8) | (sequence << 16)});
                         }
                         if (group == 5) r.skip(4);
                     }
@@ -231,6 +251,19 @@ struct Probe {
                     prompt.choices.push_back({"battle_phase", "Enter Battle Phase", 6, {}});
                 if (prompt.end) prompt.choices.push_back({"end_turn", "End turn", 7, {}});
                 if (prompt.shuffle) prompt.choices.push_back({"shuffle_hand", "Shuffle own hand", 8, {}});
+                break;
+            }
+            case MSG_SELECT_POSITION: {
+                require(practice_mode && prompt.kind == 0, "unsupported position prompt");
+                prompt.kind = kind;
+                prompt.player = r.read(1);
+                r.skip(4); // Card identity is already confined to this player's view.
+                const auto mask = r.read(1);
+                require(mask > 0 && mask <= 15, "invalid position mask");
+                for (uint32_t position : {1u, 2u, 4u, 8u})
+                    if (mask & position)
+                        prompt.choices.push_back({"choose_position", std::string(position & POS_FACEUP ? "Face-up " : "Face-down ") +
+                            (position & POS_ATTACK ? "Attack Position" : "Defense Position"), int32_t(position), {}});
                 break;
             }
             case MSG_SELECT_PLACE:
@@ -394,6 +427,29 @@ std::string visible_monsters(Probe& probe, int player, int viewer) {
     return out.str();
 }
 
+std::string private_hand(Probe& probe, int player, int viewer) {
+    if (player != viewer) return "[]";
+    const auto count = query_field_count(probe.duel, player, LOCATION_HAND);
+    require(count >= 0 && count <= 40, "practice hand exceeds admitted deck size");
+    constexpr uint32_t FLAGS = QUERY_CODE | QUERY_ATTACK | QUERY_DEFENSE;
+    std::ostringstream out;
+    out << '[';
+    for (int slot = 0; slot < count; ++slot) {
+        if (slot) out << ',';
+        std::vector<uint8_t> buffer(32);
+        const auto length = query_card(probe.duel, player, LOCATION_HAND, slot, FLAGS, buffer.data(), 0);
+        require(length == 20, "unexpected private-hand query layout");
+        buffer.resize(length);
+        Reader reader{buffer};
+        require(reader.read(4) == uint32_t(length) && reader.read(4) == FLAGS, "private-hand query header mismatch");
+        const auto code = reader.read(4);
+        const auto attack = int32_t(reader.read(4)), defense = int32_t(reader.read(4));
+        out << "{\"slot\":" << slot << ",\"code\":" << code << ",\"attack\":" << attack << ",\"defense\":" << defense << '}';
+    }
+    out << ']';
+    return out.str();
+}
+
 std::string public_view(Probe& probe, int viewer) {
     std::ostringstream view;
     view << "{\"turn_player\":" << probe.turn_player << ",\"turn_number\":" << probe.turns
@@ -407,6 +463,7 @@ std::string public_view(Probe& probe, int viewer) {
         if (probe.allow_battle_effects)
             view << ",\"life_points\":" << std::max(0, probe.life_points[player])
                  << ",\"monsters\":" << visible_monsters(probe, player, viewer);
+        if (probe.practice_mode) view << ",\"hand\":" << private_hand(probe, player, viewer);
         view << '}';
     }
     view << ']';
@@ -434,19 +491,30 @@ void publish_prompt(Probe& probe, const Prompt& prompt, uint32_t id) {
 void set_newdoria_callbacks();
 void arrange_newdoria(intptr_t duel, bool target_own_monster, bool mutual = false);
 
-void run_session(uint32_t seed, bool real_cards = false) {
-    if (real_cards) set_newdoria_callbacks();
+void set_practice_callbacks();
+void setup_practice(intptr_t duel, const std::string& profile, uint32_t seed);
+
+void run_session(uint32_t seed, bool real_cards = false, const std::string& profile = "") {
+    const bool practice = !profile.empty();
+    if (practice) set_practice_callbacks();
+    else if (real_cards) set_newdoria_callbacks();
     else set_fixture_callbacks();
     DuelOwner owner(seed);
-    if (real_cards) arrange_newdoria(owner.handle, false);
-    setup_fixture(owner.handle);
+    if (practice) setup_practice(owner.handle, profile, seed);
+    else {
+        if (real_cards) arrange_newdoria(owner.handle, false);
+        setup_fixture(owner.handle);
+    }
     Probe probe{owner.handle};
     probe.allow_battle_effects = real_cards;
+    probe.practice_mode = practice;
     Prompt prompt = probe.pump();
     std::array<uint32_t, 2> sequence{{0, 0}};
     uint32_t open_id = ++sequence.at(prompt.player);
     session_message(std::string("\"type\":\"ready\",\"player\":-1,\"capabilities\":[\"normal_summon\",\"choose_zone\",\"end_turn\",\"shuffle_hand\",\"discard\",\"deck_out\"") +
-        (real_cards ? ",\"battle_phase\",\"attack\",\"select_monster\",\"chain_effect\",\"pass_chain\",\"main_two\",\"life_point_win\"]" : "]"));
+        (real_cards ? ",\"battle_phase\",\"attack\",\"select_monster\",\"chain_effect\",\"pass_chain\",\"main_two\",\"life_point_win\"" : "") +
+        (practice ? ",\"set_monster\",\"reposition\",\"choose_position\"]" : "]") +
+        (practice ? ",\"pool_sha256\":\"" + std::string(PRACTICE_POOL_SHA256) + "\",\"deck_profile\":" + json_string(profile) : ""));
     publish_prompt(probe, prompt, open_id);
     for (int command_count = 0; command_count < 4096; ++command_count) {
         // A waiting player is not a hung engine. The watchdog applies only while
@@ -573,7 +641,8 @@ int main(int argc, char** argv) {
     // This diagnostic intentionally only builds for Linux in its first version.
     alarm(10);
     try {
-        const bool real_session = argc == 4 && std::strcmp(argv[1], "--newdoria-session") == 0;
+        const bool practice = argc == 6 && std::strcmp(argv[1], "--practice-session") == 0;
+        const bool real_session = practice || (argc == 4 && std::strcmp(argv[1], "--newdoria-session") == 0);
         const bool session = real_session || (argc == 4 && std::strcmp(argv[1], "--session") == 0);
         const bool newdoria = (argc == 4 || argc == 5) && std::strcmp(argv[1], "--newdoria") == 0;
         require((argc == 3 || session || newdoria) && std::strcmp(argv[session || newdoria ? 2 : 1], "--seed") == 0,
@@ -581,7 +650,11 @@ int main(int argc, char** argv) {
         if (argc == 5) require(newdoria && (std::strcmp(argv[4], "--target-own") == 0 || std::strcmp(argv[4], "--mutual") == 0), "unsupported scenario option");
         const auto seed = unsigned_integer(argv[session || newdoria ? 3 : 2]);
         if (newdoria) run_newdoria(seed, argc == 5 && std::strcmp(argv[4], "--target-own") == 0, argc == 5 && std::strcmp(argv[4], "--mutual") == 0);
-        else if (session) run_session(seed, real_session);
+        else if (session) {
+            if (practice) require(std::strcmp(argv[4], "--deck") == 0 &&
+                (std::strcmp(argv[5], "mixed") == 0 || std::strcmp(argv[5], "dragons") == 0), "expected approved --deck mixed|dragons profile");
+            run_session(seed, real_session, practice ? argv[5] : "");
+        }
         else run_probe(seed);
         return 0;
     } catch (const std::exception& error) {

@@ -87,7 +87,7 @@ class ReferenceCardDataTests(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
-        for relative in ("Data/reference_cards/newdoria_battle.json", "Tools/ocg/lua/c4335645.lua", "Tools/ocg/lua/test_newdoria.lua"):
+        for relative in ("Data/reference_cards/newdoria_battle.json", "Data/reference_cards/native_pool.json", "Data/reference_cards/scripts.json", "Data/cards/cards.json", "Tools/ocg/lua/c4335645.lua", "Tools/ocg/lua/test_newdoria.lua"):
             target = self.root / relative
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(ROOT / relative, target)

@@ -2,7 +2,7 @@ extends Control
 
 signal return_requested
 
-## Opt-in native-core lab. Never selected by the production board or main scene.
+## Opt-in native-core lab, entered only through explicit guarded navigation.
 var session: OcgReferenceSession
 var current: Dictionary = {}
 var viewer := -1
@@ -20,10 +20,16 @@ var _guide: Label
 var _pending_prompt: Dictionary = {}
 var _zone_rows: Array[GridContainer] = []
 var _margin: MarginContainer
+var _mode_selection: OptionButton
+var _active_mode := 0
+var _hand: VBoxContainer
 
 
 func _ready() -> void:
 	var data: Variant = JSON.parse_string(FileAccess.get_file_as_string("res://Data/reference_cards/newdoria_battle.json"))
+	if data is Dictionary:
+		for card in data.get("cards", []): _names[int(card.code)] = str(card.name)
+	data = JSON.parse_string(FileAccess.get_file_as_string(OcgReferenceSession.POOL_PATH))
 	if data is Dictionary:
 		for card in data.get("cards", []): _names[int(card.code)] = str(card.name)
 	_build_ui()
@@ -88,10 +94,13 @@ func start_new_duel() -> void:
 	viewer = -1
 	finished = false
 	_clear(_field)
+	_clear(_hand)
 	_clear(_choices)
 	cover_board()
-	status_line = "Starting native Newdoria fixture…"
-	if not session.start_newdoria_fixture(42):
+	_active_mode = _mode_selection.selected
+	status_line = "Starting selected native practice session…"
+	var started := session.start_newdoria_fixture(42) if _active_mode == 0 else session.start_practice_deck("mixed" if _active_mode == 1 else "dragons", 42)
+	if not started:
 		status_line = "Build the optional Linux core first: python3 Tools/build_ocg_probe.py --fetch"
 		finished = true
 	_status.text = status_line
@@ -105,6 +114,7 @@ func close_session() -> void:
 	status_line = "Session closed. No native duel process remains. Restart to play again."
 	_status.text = status_line
 	_clear(_field)
+	_clear(_hand)
 	_clear(_choices)
 	cover_board()
 
@@ -160,15 +170,25 @@ func _build_ui() -> void:
 	column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	column.add_theme_constant_override("separation", 16)
 	scroll.add_child(column)
-	var title := _label("NATIVE CORE · NEWDORIA BATTLE LAB", 32)
+	var title := _label("NATIVE CORE · PRACTICE LAB", 32)
 	column.add_child(title)
-	var subtitle := _label("Isolated two-card experiment · Real Lua effect · Arranged opening field + synthetic Normal Monster decks", 18)
+	var subtitle := _label("Experimental modes · Newdoria Lua scenario or six-card Normal Monster pool · Practice copy limits are relaxed, not tournament-legal", 18)
 	column.add_child(subtitle)
+	_mode_selection = OptionButton.new()
+	_mode_selection.custom_minimum_size.y = 48
+	_mode_selection.add_item("Newdoria battle scenario")
+	_mode_selection.add_item("Practice · Mixed Normal Monsters")
+	_mode_selection.add_item("Practice · Dragons + Normal Tuner")
+	_mode_selection.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_mode_selection.fit_to_longest_item = false
+	_mode_selection.clip_text = true
+	_mode_selection.tooltip_text = "Select a mode, then Start / restart selected. Selection alone does not end the active session."
+	column.add_child(_mode_selection)
 	var toolbar := HFlowContainer.new()
 	toolbar.add_theme_constant_override("h_separation", 12)
 	toolbar.add_theme_constant_override("v_separation", 8)
 	column.add_child(toolbar)
-	_button(toolbar, "Restart fixture", start_new_duel)
+	_button(toolbar, "Start / restart selected", start_new_duel)
 	_button(toolbar, "Cover / Esc", cover_board)
 	_button(toolbar, "Close native session", close_session)
 	_button(toolbar, "Return to arena", return_to_arena)
@@ -190,6 +210,8 @@ func _build_ui() -> void:
 	_field = VBoxContainer.new()
 	_field.add_theme_constant_override("separation", 14)
 	_content.add_child(_field)
+	_hand = VBoxContainer.new()
+	_content.add_child(_hand)
 	_content.add_child(_label("CORE-OFFERED ACTIONS", 21))
 	_choices = GridContainer.new()
 	_choices.columns = 2
@@ -206,6 +228,9 @@ func _render() -> void:
 	_clear(_choices)
 	for i in current.offers.size():
 		_button(_choices, str(current.offers[i].label), choose_offer.bind(i))
+	if _active_mode != 0:
+		_guide.text = "Real card data, empty opening field. Your hand identities are private. Normal Summon or Set, change position / Flip Summon on a later turn, and battle to an LP win. These 40-card practice decks intentionally exceed three copies per card."
+		return
 	var turn := int(current.view.turn_number)
 	_guide.text = "Try the effect: Player 1 ends turn. Player 2 enters Battle Phase, attacks Newdoria with The Portrait's Secret. Player 1 then selects the monster Newdoria will destroy."
 	if turn >= 2 and int(current.view.players[0].graveyard_count) > 0:
@@ -217,6 +242,11 @@ func _render() -> void:
 func _render_view(view: Dictionary) -> void:
 	_zone_rows.clear()
 	_clear(_field)
+	_clear(_hand)
+	if _active_mode != 0:
+		_hand.add_child(_label("YOUR HAND · PLAYER %d ONLY" % (viewer + 1), 21))
+		for card in view.players[viewer].get("hand", []):
+			_hand.add_child(_label("Slot %d · %s · ATK %d / DEF %d" % [int(card.slot) + 1, str(_names.get(int(card.code), "Approved Normal Monster")), int(card.attack), int(card.defense)], 18))
 	for player in [1, 0]:
 		var state: Dictionary = view.players[player]
 		_field.add_child(_label("PLAYER %d   |   LP %d   ·   Deck %d   ·   Hand %d   ·   GY %d" % [player + 1, int(state.life_points), int(state.deck_count), int(state.hand_count), int(state.graveyard_count)], 22))

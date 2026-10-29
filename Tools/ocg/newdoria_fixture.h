@@ -12,6 +12,7 @@ uint32_t real_fixture_card(uint32_t code, card_data* data) {
         data->race = row.race;
         data->attack = row.attack;
         data->defense = row.defense;
+        write_setcode(data->setcode, row.setcode);
         return 0;
     }
     return fixture_card(code, data);
@@ -169,4 +170,57 @@ void run_newdoria(uint32_t seed, bool target_own_monster, bool mutual) {
         << "\"forced_chain_prompts\":" << forced_prompts << ",\"life_points\":[8000,8000],"
         << "\"graveyard_counts\":[" << query_field_count(duel, 0, LOCATION_GRAVE) << ','
         << query_field_count(duel, 1, LOCATION_GRAVE) << "]}\n";
+}
+
+uint32_t practice_card(uint32_t code, card_data* data) {
+    data->clear();
+    for (const auto& row : PRACTICE_CARDS) {
+        if (row.code != code) continue;
+        data->code = row.code;
+        data->type = row.type;
+        data->level = row.level;
+        data->attribute = row.attribute;
+        data->race = row.race;
+        data->attack = row.attack;
+        data->defense = row.defense;
+        write_setcode(data->setcode, row.setcode);
+        return 0;
+    }
+    callback_error = "practice card is outside the approved metadata pool";
+    return 0;
+}
+
+void set_practice_callbacks() {
+    set_card_reader(practice_card);
+    set_script_reader(fixture_script); // Normal/Tuner only; no external scripts.
+    set_message_handler(core_message);
+}
+
+void setup_practice(intptr_t duel, const std::string& profile, uint32_t seed) {
+    require(profile == "mixed" || profile == "dragons", "unsupported practice deck profile");
+    std::vector<uint32_t> codes;
+    for (const auto& row : PRACTICE_CARDS)
+        if (profile == "mixed" || row.race == RACE_DRAGON) codes.push_back(row.code);
+    require(!codes.empty() && callback_error.empty(), "invalid practice pool");
+    for (uint8_t player = 0; player < 2; ++player) {
+        set_player_info(duel, player, 8000, 5, 1);
+        std::vector<uint32_t> deck;
+        for (uint32_t index = 0; index < 40; ++index) deck.push_back(codes[index % codes.size()]);
+        // The core API does not shuffle host-provided starting decks for us.
+        // Explicit Fisher-Yates + rejection sampling avoids std::shuffle's
+        // implementation-dependent mapping and modulo bias. Separate player streams.
+        std::mt19937 random(seed ^ (UINT32_C(0x9e3779b9) * uint32_t(player + 1)));
+        for (uint32_t count = uint32_t(deck.size()); count > 1; --count) {
+            const uint32_t threshold = uint32_t(-count) % count;
+            uint32_t sample;
+            do { sample = uint32_t(random()); } while (sample < threshold);
+            std::swap(deck[count - 1], deck[sample % count]);
+        }
+        for (const auto code : deck)
+            new_card(duel, code, player, player, LOCATION_DECK, 0, POS_FACEDOWN_DEFENSE);
+    }
+    require(callback_error.empty(), "practice card callback: " + callback_error);
+    // Intentionally relaxed copy counts: this six-card subset cannot fill a legal
+    // 40-card deck at three copies each. No tournament legality is claimed.
+    start_duel(duel, uint32_t(CURRENT_RULE) << 16);
 }

@@ -38,6 +38,9 @@ Use **Core lab** in the arena toolbar (or **Experimental core lab** on its cover
 Confirmation ends the current arena duel; returning starts a fresh original-engine
 duel. A missing native build leaves the current duel untouched. The responsive
 arena, animations and saved sound settings remain available.
+The lab also offers a [real Normal Monster practice pool](docs/OCG_PRACTICE_POOL.md):
+six validated card records, seeded 40-card practice presets, private hands and
+native Set/Flip/position choices. Copy limits are relaxed; these are not legal decks.
 
 ---
 
