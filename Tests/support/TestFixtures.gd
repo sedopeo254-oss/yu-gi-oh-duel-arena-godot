@@ -685,6 +685,14 @@ static func real_library() -> Dictionary:
 	return _real_library
 
 
+## Release cached effect lambdas while their scripts are still valid. Godot 4.6.3 can
+## abort during language shutdown if this static cache outlives those scripts
+## (godotengine/godot#102569). Test entry points call this from SceneTree._finalize(),
+## after all suites and their worker sessions have finished; never clear it mid-suite.
+static func release_real_library() -> void:
+	_real_library.clear()
+
+
 ## One real deck as an ordered Array[CardDef], expanded from its `quantity` entries, plus
 ## its name and any load errors: {"name", "cards", "errors"}. A name the library does not
 ## know is an error, never a silent skip.

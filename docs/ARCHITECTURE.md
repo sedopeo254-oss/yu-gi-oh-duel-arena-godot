@@ -624,3 +624,49 @@ Recorded so they are not silently reversed.
 | Ambiguous rulings are isolated behind a single predicate | So a later correction is a one-place change that fails loudly. |
 | The engine runs on a worker thread behind `EngineSession` (ADR-0001) | Mid-resolution decisions are synchronous calls inside the engine; a UI cannot answer them on its main thread, and a resumable engine would rewrite the Chain paths every assertion sits on. |
 | A session channel advances only at its own player's prompts | Otherwise the count, ids, views or log of one channel would reveal whether the other player was asked something — or could have responded. |
+
+---
+
+## ADR-0002 — player-channel card handles (Phase 7 B0)
+
+**Decision:** project hidden card references at `EngineSession`, keeping engine/replay IDs
+unchanged. Existing engine-level assertions and `DuelDriver` intentionally use instance IDs as
+internal references; changing `GameState.get_visible_state()` would retarget those assertions.
+Consequently, direct engine views and logs remain **trusted internal APIs**, not safe transport
+payloads. A UI, future network client or untrusted controller must use the session projection.
+
+`EngineSession.Identity` supplies per-viewer negative integer handles (`< -1`; `-1` remains the
+no-card sentinel). They are allocated in that viewer's delivery order, never registration order,
+and consume no duel RNG. Visible cards retain their engine IDs. Views, Chain targets, events,
+action candidates and card-selection options use the same projection. Submitted target/tribute
+choices are translated back and revalidated; guessed positive hidden IDs, unknown handles and
+expired handles are refused. Decision answers remain option **indices**; position/zone enums
+and trigger-order indices are not card identifiers.
+
+A handle expires when its card moves, including hand/Deck transitions and any departure from the
+field. A face-down card keeps its handle while it stays put. Deck-selection handles expire at
+every delivered message, including after shuffles (which emit no engine event). No handle is
+allocated merely because the other player receives a prompt, preserving the unit-A channel
+privacy invariants. Stale mappings are never reused during a session.
+
+**Historical events need historical visibility.** `GameState.event_recorded` is a read-only
+observer signal emitted before `event_emitted`, whose continuous-effect listeners may synchronously
+mutate the board and emit nested events. The session captures references there, before mutation,
+but allocates their handles only when the viewer receives their log. A named public return-to-hand
+event therefore cannot expose the new hidden-hand handle. Events predating a test-only
+`start_attached()` use isolated historical handles rather than guesses about their old visibility.
+The callback is disconnected at shutdown; the session's lifecycle remains cycle-free.
+
+The session also drops `DUEL_STARTED.seed`: public Deck lists plus the deterministic shuffle seed
+would otherwise identify opening hands without needing IDs. The seed remains in the authoritative
+engine log and replay payload. Explicit own-Deck selection requests provide `option_labels` for
+only the offered candidates; opponent hidden choices remain unnamed.
+
+**Verification:** `HiddenIdentityTests` covers the Deck-list-order attack, both channels across
+six real duels, stable field handles, hand and Graveyard round trips, stale/guessed-ID rejection,
+view/offer/event consistency, synchronous nested-event ordering, Deck-handle expiration, enum
+integrity, seed filtering and option-label privacy. The unchanged 174 engine-session assertions
+still compare all six reference duels event-for-event, board-for-board and replay-for-replay.
+Only their test-harness protocol conversion decodes handles for the pre-existing engine-based
+policy; raw channel messages remain untouched for privacy comparisons. Run the focused suite with
+`./Tools/run_tests.sh RunHiddenIdentityTests`.

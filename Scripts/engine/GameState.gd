@@ -10,6 +10,9 @@ extends RefCounted
 ## trigger effects can distinguish destroyed / Tributed / discarded / banished / returned
 ## (RULES_SPEC.md 8, master prompt 19). There is deliberately no untyped move helper.
 
+## Read-only observers capture event-time visibility before effect listeners can mutate state.
+## Never mutate the duel from this signal; rules continue to use event_emitted.
+signal event_recorded(event: GameEvent)
 signal event_emitted(event: GameEvent)
 
 const PLAYER_COUNT := 2
@@ -228,6 +231,7 @@ func emit(kind: GameEvent.Kind, data: Dictionary = {}) -> GameEvent:
 	ev.turn = turn_number
 	ev.phase = phase
 	events.append(ev)
+	event_recorded.emit(ev)
 	event_emitted.emit(ev)
 	return ev
 
@@ -1601,7 +1605,9 @@ func surrender(pid: int) -> void:
 # Hidden information filtering. Master prompt 40, RULES_SPEC.md 12.
 # ---------------------------------------------------------------------------
 
-## A viewer-filtered snapshot. The engine knows everything; this is what a player may see.
+## Viewer-filtered card data with INTERNAL instance ids, for rules/tests/trusted controllers.
+## Do not transport this snapshot directly: EngineSession replaces hidden ids with opaque
+## per-viewer handles and projects logs/prompts too (ADR-0002).
 func get_visible_state(viewer_id: int) -> Dictionary:
 	var out := {
 		"viewer": viewer_id,

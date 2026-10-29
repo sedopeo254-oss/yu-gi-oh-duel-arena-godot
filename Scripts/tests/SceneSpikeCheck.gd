@@ -55,6 +55,8 @@ func _process(_delta: float) -> bool:
 	if clicked and _summon_succeeded():
 		_finish("")
 		return false
+	if screen.get("handoff_required") == true:
+		screen.reveal_board()
 	var prompt: Dictionary = screen.current
 	if prompt.is_empty():
 		return false

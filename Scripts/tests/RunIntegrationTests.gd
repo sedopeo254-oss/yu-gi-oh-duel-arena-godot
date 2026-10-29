@@ -1,5 +1,9 @@
 extends SceneTree
 
+func _finalize() -> void:
+	TestFixtures.release_real_library()
+
+
 ## Targeted runner for the post-card phase: object lifetime, scripted full duels and the
 ## backend acceptance gate.
 ##
@@ -35,4 +39,4 @@ func _initialize() -> void:
 			% ", ".join(empty_suites))
 	print("RESULT: %s" % ("PASS" if total_failed == 0 and empty_suites.is_empty()
 		else "FAIL"))
-	quit()
+	quit(0 if total_failed == 0 and empty_suites.is_empty() else 1)

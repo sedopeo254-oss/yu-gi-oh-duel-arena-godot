@@ -1,5 +1,9 @@
 extends SceneTree
 
+func _finalize() -> void:
+	TestFixtures.release_real_library()
+
+
 ## Targeted runner for Phase 7 unit A: the engine session adapter.
 ##
 ##   ./Tools/run_tests.sh RunSessionTests
@@ -9,6 +13,7 @@ extends SceneTree
 func _initialize() -> void:
 	var suites: Array[TestCase] = []
 	suites.append(EngineSessionTests.run())
+	suites.append(HiddenIdentityTests.run())
 
 	var total_passed := 0
 	var total_failed := 0
@@ -28,4 +33,4 @@ func _initialize() -> void:
 			% ", ".join(empty_suites))
 	print("RESULT: %s" % ("PASS" if total_failed == 0 and empty_suites.is_empty()
 		else "FAIL"))
-	quit()
+	quit(0 if total_failed == 0 and empty_suites.is_empty() else 1)

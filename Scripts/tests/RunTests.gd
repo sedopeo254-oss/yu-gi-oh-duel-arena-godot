@@ -1,5 +1,9 @@
 extends SceneTree
 
+func _finalize() -> void:
+	TestFixtures.release_real_library()
+
+
 ## Headless test entry point. Master prompt 64.
 ##
 ##   godot --headless --path <project> --script res://Scripts/tests/RunTests.gd
@@ -131,6 +135,7 @@ func _initialize() -> void:
 
 	# --- Phase 7: the UI execution boundary ---
 	suites.append(EngineSessionTests.run())
+	suites.append(HiddenIdentityTests.run())
 
 	var total_passed := 0
 	var total_failed := 0
