@@ -1,6 +1,7 @@
 # Event-driven card animation prototype
 
-This is an **original procedural 2D blocking pass**, not finished high-fidelity artwork,
+This is an **original procedural 2.5D animation study**, now with a detailed visual polish pass.
+It is not finished high-fidelity artwork,
 3D monsters, or a copy of another game's assets. The production 77-card pool and both
 real decks are unchanged. No engine/rules/card implementation is modified.
 
@@ -16,8 +17,8 @@ real decks are unchanged. No engine/rules/card implementation is modified.
   ```
 
   It is an explicitly arranged test fixture, not a new campaign or CPU opponent.
-  Auto play runs five real, legally offered actions. Uncheck it to use **Next engine
-  action**. **Replay fixture** resets cleanly. Complete turns advance between position
+  Auto play runs five real, legally offered actions. Uncheck it to use **Next
+  moment**. **Replay study** resets cleanly. Complete turns advance between position
   changes, because manually changing position on the summon turn or twice per turn
   would be illegal. Destruction comes from the opponent's stronger battle attacker.
 - **Reduce motion:** skips queued/active effects and shows static field representations.
@@ -29,16 +30,20 @@ EARTH / Fiend / Normal, **1200 ATK / 1500 DEF**. Reference:
 [official card database](https://www.db.yugioh-card.com/yugiohdb/card_search.action?cid=5219&ope=2).
 It is not silently added to the approved production card library or deck lists.
 
+The gallery showcase adds original generated-in-code sound design: a quiet ambient drone,
+summon swell, wood creak, attack sweep and cracking/dust cues. **Sound** mutes it independently.
+No audio samples or recordings are used; the normal playable board remains silent.
+
 ## Choreography
 
-| Cue | Portrait blocking pass |
+| Cue | Refined Portrait profile |
 | --- | --- |
-| Successful summon | Dark pink aura; empty wooden frame; green claw breaks the canvas; head and glowing eyes emerge |
+| Successful summon | Layered dark pink atmosphere; bevelled, grain-detailed wooden frame; woven canvas tears with curled edges; articulated green claw and shaded face emerge |
 | Idle | Subtle aura, head and claw motion |
-| Attack declaration | Frame lunges toward the offered target; green / purple three-claw slash |
+| Attack declaration | Anticipatory recoil, tilted lunge and eased recovery; tapered green / purple claw arcs |
 | Face-up Defense Position | Hand and head retract; frame turns to a covered wooden reverse |
 | Face-up Attack Position | Reverse sequence uncovers the frame and creature |
-| Actual destruction | Frame crack; canvas splits vertically; halves separate and fade into gray dust |
+| Actual destruction | Branching cracks, splintered wood and frayed canvas halves; varied shards and soft gray dust |
 
 The covered reverse is **artistic Defense Position choreography**, not a rules change
 from face-up Defense to face-down. Truly face-down monsters show no identifying field
@@ -74,6 +79,7 @@ actor, including cards whose owner privately knows their identity.
 ```bash
 bash Tools/run_tests.sh --import
 bash Tools/run_tests.sh SceneAnimationCheck
+bash Tools/run_tests.sh SceneAnimationRenderCheck
 bash Tools/run_tests.sh SceneBoardCheck
 bash Tools/run_tests.sh SceneBoardDuelCheck
 bash Tools/run_tests.sh SceneSpikeCheck
@@ -90,6 +96,10 @@ handoff, manual cover/uncover, restart, reduced motion, duplicate render drains,
 negated summons, Flip Summon coalescing, Special Summon dispatch, non-destruction moves,
 profile registration, burst bounding, control/target relocation cancellation and finite completion.
 
+`SceneAnimationRenderCheck` samples 182 actual draw states and traps renderer, script
+and shader errors through [Godot’s Logger](https://docs.godotengine.org/en/4.5/classes/class_logger.html). It also checks synthesized audio buffers,
+replay interruption and reduced-motion atmosphere.
+
 Optional real-render capture (needs a display, not `--headless`):
 
 ```bash
@@ -100,13 +110,15 @@ ANIMATION_CAPTURE_DIR=/tmp/portrait-animation-captures \
 
 The capture script writes 15 frames spanning empty/ emerging summon, both position
 changes, lunge/slash, crack, split and dust. See `Reports/CARD_ANIMATION_TEST_RESULTS.md`
-for measured checks and render environment.
+for the initial checkpoint; see `Reports/PORTRAIT_POLISH_TEST_RESULTS.md` for the
+subsequent detailed-art, atmosphere and sound polish pass.
 
 ## Remaining limits
 
-- One bespoke procedural profile, with intentionally simple geometry; other monsters
-  have abstract generic cues. No production textures, skeletal rigging, sound, particle
-  shaders, 3D camera, cinematic cut-ins or animation editor tooling.
+- One bespoke procedural profile, now shaded and detailed; other monsters use a faceted
+  hologram fallback. These remain programmatic illustrations, not production textures,
+  skeletal rigs or 3D models. No 3D camera, cinematic board cut-ins or animation editor tooling.
+- Sound and atmospheric shader belong to the showcase only, not the normal playable board.
 - The current compact card art windows are small. The showcase magnifies the same profile
   for review; this does not claim that the production board is finished visual design.
 - Effects are cosmetic and do not block actions. Rapid play, new snapshots, handoff or
@@ -118,3 +130,14 @@ for measured checks and render environment.
 - Local Godot 4.6.3 / Mesa compatibility validation is distinct from the project's
   Godot 4.7.1 CI pin and default Forward+ renderer. No remote CI run or publishing is
   implied by local checks.
+
+## Record a complete preview
+
+```bash
+godot --path . --rendering-method gl_compatibility --audio-driver Dummy \
+  --fixed-fps 30 --write-movie /tmp/portrait-study.avi \
+  --script res://Scripts/tests/RecordPortraitAnimationDemo.gd
+```
+
+The recording runner waits for every real-event cue to complete and releases audio
+resources before quitting; no hard-coded frame cutoff truncates the final destruction.

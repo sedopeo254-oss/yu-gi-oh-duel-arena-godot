@@ -35,4 +35,7 @@ func _run() -> void:
 		screen.director.skip()
 	print("Captured 15 animation frames to ", output)
 	screen.free()
+	# AudioServer retires playback on its mixer thread; allow that retirement before quit.
+	await create_timer(0.15).timeout
+	await process_frame
 	quit()
