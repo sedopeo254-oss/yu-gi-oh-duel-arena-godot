@@ -2,13 +2,15 @@ class_name OcgReferenceSession
 extends RefCounted
 
 ## Stateful Linux development session over nonblocking pipes to ONE native core.
-## Fixture-only and count-only: not a drop-in EngineSession, not board-selectable.
+## Fixture-only: not a drop-in EngineSession, not production-board selectable.
 ## start_fixture(), poll(viewer), submit(player, prompt_id, {offer: index}), stop().
-## Supports a declared subset of legal core choices, never scripts/battle/real decks.
+## start_newdoria_fixture() adds one authored Lua effect and viewer-filtered battle views.
+## Real decks, arbitrary scripts and the full core protocol remain unsupported.
 
 const MAX_PACKET_BYTES := 16384
 const RESPONSE_TIMEOUT_MS := 11000
 const ALLOWED_CHOICES := ["normal_summon", "choose_zone", "end_turn", "shuffle_hand", "discard"]
+const BATTLE_CHOICES := ["battle_phase", "attack", "select_monster", "chain_effect", "pass_chain", "main_two"]
 
 var _owner := OS.get_thread_caller_id()
 var _pid := -1
@@ -26,6 +28,7 @@ var _deadline := 0
 var _last_error := ""
 var _over_viewers: Array = []
 var _terminal_reports: Array = []
+var _real_cards := false
 
 
 func _notification(what: int) -> void:
@@ -41,6 +44,14 @@ func _notification(what: int) -> void:
 
 
 func start_fixture(seed: int = 42) -> bool:
+	return _start(seed, false)
+
+
+func start_newdoria_fixture(seed: int = 42) -> bool:
+	return _start(seed, true)
+
+
+func _start(seed: int, real_cards: bool) -> bool:
 	if OS.get_thread_caller_id() != _owner or _started or _terminal:
 		return false
 	if seed < 0 or seed > 4294967295 or not OcgCoreDiagnostic.is_available():
@@ -57,8 +68,9 @@ func start_fixture(seed: int = 42) -> bool:
 	if _revision.length() != 40:
 		_last_error = "Invalid pinned core revision."
 		return false
+	_real_cards = real_cards
 	var process := OS.execute_with_pipe(ProjectSettings.globalize_path(OcgCoreDiagnostic.BINARY_PATH),
-		PackedStringArray(["--session", "--seed", str(seed)]), false)
+		PackedStringArray(["--newdoria-session" if real_cards else "--session", "--seed", str(seed)]), false)
 	if process.is_empty():
 		_last_error = "Could not launch the isolated core process."
 		return false
@@ -135,6 +147,27 @@ func last_error() -> String:
 func _pump() -> void:
 	if not _started or _terminal:
 		return
+	if not _drain_output():
+		return
+	if not OS.is_process_running(_pid):
+		_child_live = false
+		var exit_code := OS.get_process_exit_code(_pid)
+		# The child can write/exit between our last EAGAIN and this liveness
+		# check. Drain the now-closed pipes once more before judging completion.
+		if not _drain_output():
+			return
+		if _over_viewers.size() == 2 and _buffer.is_empty() and exit_code == 0:
+			for report in _terminal_reports:
+				_outboxes[int(report.player)].append(report.duplicate(true))
+			_terminal = true
+			_close_process()
+		else:
+			_fail("Native core exited before a clean complete result (exit %d)." % exit_code)
+	elif _pending and Time.get_ticks_msec() > _deadline:
+		_fail("Native core response timed out.")
+
+
+func _drain_output() -> bool:
 	# Nonblocking FileAccess reads return immediately. Keep partial JSON lines
 	# across frames and cap work/output so a corrupted child cannot freeze the UI.
 	for _iteration in 8:
@@ -144,31 +177,19 @@ func _pump() -> void:
 		_buffer.append_array(bytes)
 		if _buffer.size() > MAX_PACKET_BYTES:
 			_fail("Native session packet exceeded the limit.")
-			return
+			return false
 		var newline := _buffer.find(10)
 		while newline >= 0:
 			var line := _buffer.slice(0, newline).get_string_from_utf8()
 			_buffer = _buffer.slice(newline + 1)
 			if not _accept_line(line):
-				return
+				return false
 			newline = _buffer.find(10)
 	var errors := _stderr.get_buffer(4096)
 	if not errors.is_empty():
 		_fail("Native core stderr: %s" % errors.get_string_from_utf8().left(512))
-		return
-	if not OS.is_process_running(_pid):
-		_child_live = false
-		var exit_code := OS.get_process_exit_code(_pid)
-		if _over_viewers.size() == 2 and _buffer.is_empty() and exit_code == 0:
-			# A report printed just before a crash is NOT a successful session.
-			for report in _terminal_reports:
-				_outboxes[int(report.player)].append(report.duplicate(true))
-			_terminal = true
-			_close_process()
-		else:
-			_fail("Native core exited before a clean complete result (exit %d)." % exit_code)
-	elif _pending and Time.get_ticks_msec() > _deadline:
-		_fail("Native core response timed out.")
+		return false
+	return true
 
 
 func _accept_line(line: String) -> bool:
@@ -199,7 +220,11 @@ func _accept_line(line: String) -> bool:
 			_fail("Native message contains an unapproved field.")
 			return false
 	if kind == "ready":
-		if _ready or message.get("player") != -1 or message.get("capabilities") != ["normal_summon", "choose_zone", "end_turn", "shuffle_hand", "discard", "deck_out"]:
+		var capabilities := ["normal_summon", "choose_zone", "end_turn", "shuffle_hand", "discard", "deck_out"]
+		if _real_cards:
+			capabilities.append_array(BATTLE_CHOICES)
+			capabilities.append("life_point_win")
+		if _ready or message.get("player") != -1 or message.get("capabilities") != capabilities:
 			_fail("Native session capabilities mismatch.")
 			return false
 		_ready = true
@@ -208,8 +233,8 @@ func _accept_line(line: String) -> bool:
 		_fail("Native session message has no valid player.")
 		return false
 	var player := int(message.player)
-	if kind in ["prompt", "over"] and not _valid_view(message.get("view")):
-		_fail("Native snapshot is not the supported count-only shape.")
+	if kind in ["prompt", "over"] and not _valid_view(message.get("view"), _real_cards, player):
+		_fail("Native snapshot does not match the selected fixture shape.")
 		return false
 	if kind in ["prompt", "rejected"]:
 		if not _whole_number(message.get("prompt_id"), 1, 4294967295):
@@ -221,20 +246,23 @@ func _accept_line(line: String) -> bool:
 			_fail("Native session prompt shape is invalid.")
 			return false
 		for offer in message.offers:
-			if not offer is Dictionary or offer.size() != 2 or not offer.get("kind") in ALLOWED_CHOICES or not offer.get("label") is String:
+			if not offer is Dictionary or offer.size() != 2 or not offer.get("label") is String:
 				_fail("Native session offered an unsupported action.")
+				return false
+			if not offer.get("kind") in ALLOWED_CHOICES and not (_real_cards and offer.get("kind") in BATTLE_CHOICES):
+				_fail("Native session action exceeds selected fixture capabilities.")
 				return false
 	elif kind == "rejected":
 		if not message.get("reason") in ["that is not the prompt open for you", "invalid choice index"]:
 			_fail("Native rejection is malformed.")
 			return false
 	elif kind == "over":
-		if player in _over_viewers or not _whole_number(message.get("winner"), 0, 2) or message.get("reason_code") != 2:
-			_fail("Native result is outside the supported deck-out scenario.")
+		if player in _over_viewers or not _whole_number(message.get("winner"), 0, 2) or not (message.get("reason_code") == 2 or (_real_cards and message.get("reason_code") == 1)):
+			_fail("Native result is outside the selected fixture outcomes.")
 			return false
 		if not _terminal_reports.is_empty():
 			var previous: Dictionary = _terminal_reports[0]
-			if message.winner != previous.winner or message.reason_code != previous.reason_code or message.view != previous.view:
+			if message.winner != previous.winner or message.reason_code != previous.reason_code or not _matching_terminal_views(message.view, previous.view, _real_cards):
 				_fail("Native terminal reports disagree between players.")
 				return false
 		_over_viewers.append(player)
@@ -252,22 +280,61 @@ func _accept_line(line: String) -> bool:
 	return true
 
 
-static func _valid_view(value: Variant) -> bool:
-	if not value is Dictionary or value.size() != 4:
+static func _valid_view(value: Variant, real_cards: bool = false, viewer: int = -1) -> bool:
+	if not value is Dictionary or value.size() != (5 if real_cards else 4):
+		return false
+	if real_cards and value.get("viewer") != viewer:
 		return false
 	if not _whole_number(value.get("turn_player"), 0, 1) or not _whole_number(value.get("turn_number"), 1, 256):
 		return false
-	if not _whole_number(value.get("phase"), 1, 512) or not int(value.phase) in [1, 2, 4, 512]:
+	var phases := [1, 2, 4, 8, 16, 32, 64, 128, 256, 512] if real_cards else [1, 2, 4, 512]
+	if not _whole_number(value.get("phase"), 1, 512) or not int(value.phase) in phases:
 		return false
 	if not value.get("players") is Array or value.players.size() != 2:
 		return false
-	for player in value.players:
-		if not player is Dictionary or player.size() != 4:
+	for pid in 2:
+		var player: Variant = value.players[pid]
+		if not player is Dictionary or player.size() != (6 if real_cards else 4):
 			return false
 		for key in ["deck_count", "hand_count", "monster_count", "graveyard_count"]:
-			if not _whole_number(player.get(key), 0, 5 if key == "monster_count" else 40):
+			var maximum := 5 if key == "monster_count" else (41 if real_cards and key == "graveyard_count" else 40)
+			if not _whole_number(player.get(key), 0, maximum):
+				return false
+		if real_cards:
+			if not _whole_number(player.get("life_points"), 0, 100000) or not player.get("monsters") is Array or player.monsters.size() != 5:
+				return false
+			var occupied := 0
+			for slot in 5:
+				var card: Variant = player.monsters[slot]
+				if card == null:
+					continue
+				occupied += 1
+				if not card is Dictionary or card.get("slot") != slot or typeof(card.get("known")) != TYPE_BOOL:
+					return false
+				if not _whole_number(card.get("position"), 1, 8) or not int(card.position) in [1, 2, 4, 8]:
+					return false
+				var should_know := pid == viewer or int(card.position) in [1, 4]
+				if card.known != should_know or card.size() != (6 if should_know else 3):
+					return false
+				if should_know and (not _whole_number(card.get("code"), 1, 4294967295) or not _whole_number(card.get("attack"), -1, 100000) or not _whole_number(card.get("defense"), -1, 100000)):
+					return false
+			if occupied != player.monster_count:
 				return false
 	return true
+
+
+static func _matching_terminal_views(a: Dictionary, b: Dictionary, real_cards: bool) -> bool:
+	if not real_cards:
+		return a == b
+	var copies := [a.duplicate(true), b.duplicate(true)]
+	for value in copies:
+		value.erase("viewer")
+		for player in value.players:
+			for slot in 5:
+				var card: Variant = player.monsters[slot]
+				if card != null and int(card.position) in [2, 8]:
+					player.monsters[slot] = {"slot": slot, "position": card.position}
+	return copies[0] == copies[1]
 
 
 static func _whole_number(value: Variant, minimum: int, maximum: int) -> bool:

@@ -1,10 +1,13 @@
 """Offline provenance/recovery tests; no native build or Internet required."""
 from pathlib import Path
 import subprocess
+import json
+import shutil
+import hashlib
 import tempfile
 import unittest
 
-from build_ocg_probe import extract_pinned_source, prepare_core
+from build_ocg_probe import extract_pinned_source, prepare_core, generate_card_fixture, ROOT
 
 
 class CoreBootstrapTests(unittest.TestCase):
@@ -77,6 +80,52 @@ class CoreBootstrapTests(unittest.TestCase):
         extract_pinned_source(self.source, self.revision, destination)
         self.assertEqual((destination / "probe.cpp").read_text(), "pinned source\n")
         self.assertFalse((destination / "ignored.cpp").exists())
+
+
+class ReferenceCardDataTests(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        for relative in ("Data/reference_cards/newdoria_battle.json", "Tools/ocg/lua/c4335645.lua", "Tools/ocg/lua/test_newdoria.lua"):
+            target = self.root / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(ROOT / relative, target)
+        self.path = self.root / "Data/reference_cards/newdoria_battle.json"
+        self.data = json.loads(self.path.read_text())
+        self.output = self.root / "reference_cards.h"
+
+    def generate(self, value):
+        self.path.write_text(json.dumps(value))
+        generate_card_fixture(self.root, self.output)
+
+    def test_official_numeric_mapping_and_leading_zero_passcode(self):
+        self.generate(self.data)
+        result = self.output.read_text()
+        self.assertIn("4335645u, TYPE_MONSTER | TYPE_EFFECT, 4, ATTRIBUTE_DARK, RACE_FIEND, 1200, 800", result)
+        self.assertIn("32541773u, TYPE_MONSTER | TYPE_NORMAL", result)
+        self.assertIn(hashlib.sha256((self.root / "Tools/ocg/lua/c4335645.lua").read_bytes()).hexdigest(), result)
+
+    def test_rejects_malformed_schema_and_card_record(self):
+        for value in ([], None, {}, {"schema_version": True, "cards": []}, {"schema_version": 1, "cards": [None, 5]}):
+            with self.subTest(value=value), self.assertRaises(ValueError): self.generate(value)
+
+    def test_rejects_missing_duplicate_and_unreviewed_card_ids(self):
+        for ids in ([4335645], [4335645, 4335645], [4335645, 99999999]):
+            data = dict(self.data, cards=[dict(self.data["cards"][1], code=code) for code in ids])
+            with self.subTest(ids=ids), self.assertRaises(ValueError): self.generate(data)
+
+    def test_rejects_unprinted_or_mismatched_passcodes(self):
+        for passcode in (4335645, "4335645", "04335646", "+4335645", " 4335645", "０４３３５６４５", None):
+            self.data["cards"][1]["passcode"] = passcode
+            with self.subTest(passcode=passcode), self.assertRaises(ValueError): self.generate(self.data)
+
+    def test_rejects_unreviewed_stats_and_numeric_type_coercion(self):
+        for key, value in (("attack", 1500), ("defense", 800.0), ("level", 4.0), ("race", "Warrior"), ("attribute", "EARTH")):
+            data = json.loads(self.path.read_text())
+            data["cards"][1][key] = value
+            with self.subTest(key=key), self.assertRaises(ValueError): self.generate(data)
+            self.path.write_text(json.dumps(self.data))
 
 
 if __name__ == "__main__":

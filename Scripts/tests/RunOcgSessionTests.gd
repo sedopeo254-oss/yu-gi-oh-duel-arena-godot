@@ -1,11 +1,24 @@
 extends SceneTree
 
 
+class LateFinalOutputSession extends OcgReferenceSession:
+	var withheld := false
+	func _drain_output() -> bool:
+		if not withheld:
+			withheld = true
+			# Deterministically model final bytes arriving after the last empty
+			# nonblocking read, immediately before child-exit observation.
+			OS.delay_msec(100)
+			return true
+		return super._drain_output()
+
+
 func _initialize() -> void:
 	var t := TestCase.new("OcgReferenceSession")
 	_test_choices(t)
 	_test_lifecycle(t)
 	_test_transport_boundary(t)
+	_test_exit_drain(t)
 	_test_deck_out(t)
 	print(t.report())
 	print("TOTAL: %d passed, %d failed" % [t.passed, t.failed])
@@ -187,3 +200,24 @@ func _test_transport_boundary(t: TestCase) -> void:
 		t.check(not session.is_running(), "invalid worker terminates: %s" % mode)
 		t.check(not _alive(pid), "failed/hung child reaped: %s" % mode)
 		session.stop()
+
+
+func _test_exit_drain(t: TestCase) -> void:
+	t.start("final bytes are drained after observing child exit")
+	var manifest: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(OcgCoreDiagnostic.LOCK_PATH))
+	var session := LateFinalOutputSession.new()
+	var child := OS.execute_with_pipe("python3", PackedStringArray([
+		ProjectSettings.globalize_path("res://Tools/ocg/fake_session_worker.py"), "clean_exit"]), false)
+	if not t.check(not child.is_empty(), "late-final-output fixture starts"):
+		return
+	session._pid = int(child.pid)
+	session._child_live = true
+	session._stdio = child.stdio
+	session._stderr = child.stderr
+	session._revision = manifest.core.revision
+	session._started = true
+	session._pending = true
+	session._deadline = Time.get_ticks_msec() + 3000
+	t.eq(_wait(session, 0).get("type"), "over", "late first result accepted only after clean exit")
+	t.eq(_wait(session, 1).get("type"), "over", "late second result preserved")
+	t.check(not session.is_running(), "late-output worker is reaped")

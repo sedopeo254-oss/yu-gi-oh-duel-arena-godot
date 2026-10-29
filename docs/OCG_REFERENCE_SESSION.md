@@ -8,8 +8,9 @@ of replaying a hard-coded smoke scenario.
 **It is not the production game's backend.** `EngineSession`, `DuelBoard`, real
 decks, card effects and normal startup are unchanged. It is not a drop-in
 `EngineSession` substitute: snapshots contain only public counts, and all
-supported decisions use offer indices. No battle, real card database, effect Lua,
-networked opponent, card artwork, or animation is supplied by this milestone.
+supported decisions use offer indices. This page describes `start_fixture()` only. The separate
+[`start_newdoria_fixture()` battle lab](OCG_NEWDORIA_LAB.md) adds reviewed two-card
+data, one authored Lua effect and battle views; it does not change the original mode.
 
 ## Supported scope
 
@@ -79,7 +80,9 @@ The native worker limits input lines and total commands, and applies its
 10-second watchdog **while processing**, not while a person is deciding.
 Godot also bounds awaited responses. A complete duel needs two consistent
 terminal reports **and a confirmed zero child exit** before either `over` result
-is published. A crash after printing success is an error; incomplete or hung
+is published. After observing child exit, the adapter drains the pipes again
+to avoid losing final messages written between the last read and the exit check.
+A crash after printing success is an error; incomplete or hung
 completion is bounded and terminates the process.
 
 The adapter rejects unknown top-level fields, extra offer fields, unsupported
@@ -90,31 +93,14 @@ is exposed. Wrong-player rejections do not republish the active player's prompt.
 This does not claim full shared-screen timing privacy, OS-level sandboxing, or
 the ability to execute untrusted effect scripts safely.
 
-## Next real-card/Lua/UI milestone
+## Subsequent real-card/Lua/UI slice
 
-A bounded next slice should use existing verified project data, not pretend
-that all 77 GDScript effects become Lua-compatible automatically:
+The user-selected Newdoria + The Portrait's Secret slice is now implemented in a
+separate [native battle lab](OCG_NEWDORIA_LAB.md), with an authored Lua effect,
+official numeric metadata, real battle/target choices, viewer-filtered field
+snapshots and a minimal interactive Godot scene. The native duel can continue
+to an actual LP win; this does not imply a complete real deck or card database.
 
-1. **The user-selected real-card pair:** The Portrait's Secret (`32541773`, a
-   level-4 EARTH Fiend Normal Monster, 1200 ATK / 1500 DEF) and Newdoria
-   (`04335645` printed, integer core ID `4335645`, level-4 DARK Fiend Effect
-   Monster, 1200 ATK / 800 DEF). Record official data provenance explicitly;
-   do not redistribute a third-party database with unclear rights.
-2. **A reviewed minimal Newdoria Lua effect.** Implement the mandatory trigger
-   when it is destroyed by battle and sent to the GY, targeting any monster on
-   either field and destroying the still-related target at resolution. Use
-   the official text and pinned core API, not an invented optional effect or
-   opponent-only restriction. No GPL script collection is silently imported;
-   choosing upstream scripts requires its own license and matching-version review.
-3. **A genuine battle scenario.** On normal turn 2, Portrait attacks Newdoria in
-   face-up Defense Position. Newdoria reaches the GY; its mandatory trigger at
-   the end of the Damage Step targets and destroys Portrait. Verify both
-   graveyards, target authorization, chain resolution and unchanged LP.
-4. **Protocol/projection/UI expansion.** Decode actual battle, forced-chain and
-   target prompts before exposing this narrow slice in a separate opt-in UI.
-   Retain hidden-information filtering and lifecycle checks. Keep the existing
-   playable board/engine as default; expand one tested effect group at a time.
-
-The source of truth remains the project's official rules trail and existing
-card tests. A native simulator is a secondary reference, not a replacement for
-that evidence. See [the session verification record](../Reports/OCG_SESSION_RESULTS.md).
+The source of truth remains the official card/rules trail, not simulator output
+alone. See [the original session verification record](../Reports/OCG_SESSION_RESULTS.md)
+and [the later Newdoria verification record](../Reports/OCG_NEWDORIA_RESULTS.md).

@@ -1,8 +1,11 @@
 // Optional Fluorohydride-core diagnostic, not the game's authoritative backend.
 // Protocol source: pinned common.h, playerop.cpp and operations.cpp (see lock.json).
-// Only synthetic level-4 Normal Monsters are permitted; no effect Lua is loaded.
+// Defaults to synthetic Normal Monsters; --newdoria modes admit two reviewed
+// real cards and one project-authored Lua effect. No arbitrary decks/scripts.
 #include "ocgapi.h"
 #include "card_data.h"
+#include "effect.h"
+#include "reference_cards.h"
 #include <array>
 #include <cstring>
 #include <iomanip>
@@ -98,6 +101,8 @@ struct Choice {
     std::string label;
     int32_t integer = 0;
     std::vector<uint8_t> bytes;
+    uint32_t card_code = 0;
+    uint32_t card_location = 0;
 };
 
 struct Prompt {
@@ -122,6 +127,14 @@ struct Probe {
     int messages = 0;
     int winner = -1;
     int win_reason = 0;
+    bool allow_battle_effects = false;
+    int attacks = 0;
+    int chains_solved = 0;
+    int damage_start = 0;
+    int damage_end = 0;
+    std::array<int, 2> life_points{{8000, 8000}};
+    struct Move { uint32_t code, from, to, reason; };
+    std::vector<Move> moves{};
 
     Prompt decode(const std::vector<uint8_t>& bytes) {
         Reader r{bytes};
@@ -144,9 +157,52 @@ struct Probe {
                 r.skip(count * 4);
                 break;
             }
-            case MSG_MOVE: r.skip(16); break;
+            case MSG_MOVE: {
+                const auto code = r.read(4), from = r.read(4), to = r.read(4), reason = r.read(4);
+                moves.push_back({code, from, to, reason});
+                break;
+            }
             case MSG_SUMMONING: r.skip(8); break;
             case MSG_SUMMONED: ++summoned; break;
+            case MSG_ATTACK:
+                require(allow_battle_effects, "battle is outside the normal reference session");
+                ++attacks; r.skip(8); break;
+            case MSG_BATTLE:
+                require(allow_battle_effects, "battle is outside the normal reference session");
+                r.skip(26); break;
+            case MSG_DAMAGE_STEP_START: ++damage_start; break;
+            case MSG_DAMAGE_STEP_END: ++damage_end; break;
+            case MSG_CHAINING:
+                require(allow_battle_effects, "chains are outside the normal reference session");
+                r.skip(16); break;
+            case MSG_CHAINED: r.skip(1); break;
+            case MSG_CHAIN_SOLVING: r.skip(1); break;
+            case MSG_CHAIN_SOLVED: ++chains_solved; r.skip(1); break;
+            case MSG_CHAIN_END: break;
+            case MSG_BECOME_TARGET: { const auto count = r.read(1); r.skip(count * 4); break; }
+            case MSG_DAMAGE: {
+                const auto player = r.read(1), amount = r.read(4);
+                require(player < 2 && amount <= 100000, "invalid damage event");
+                life_points[player] -= int(amount);
+                break;
+            }
+            case MSG_SELECT_BATTLECMD: {
+                require(allow_battle_effects && prompt.kind == 0, "unsupported battle prompt");
+                prompt.kind = kind;
+                prompt.player = r.read(1);
+                require(r.read(1) == 0, "battle fixture has no activatable battle effects");
+                const auto count = r.read(1);
+                for (uint32_t index = 0; index < count; ++index) {
+                    const auto code = r.read(4);
+                    const auto controller = r.read(1), location = r.read(1), sequence = r.read(1);
+                    r.skip(1); // direct-attack capability; the scenario chooses a real target.
+                    prompt.choices.push_back({"attack", "Attack from your monster zone " + std::to_string(sequence + 1), int32_t((index << 16) | 1), {},
+                        code, controller | (location << 8) | (sequence << 16)});
+                }
+                if (r.read(1)) prompt.choices.push_back({"main_two", "Enter Main Phase 2", 2, {}});
+                if (r.read(1)) prompt.choices.push_back({"end_turn", "End turn", 3, {}});
+                break;
+            }
             case MSG_SELECT_IDLECMD: {
                 require(prompt.kind == 0, "multiple prompts in one packet");
                 prompt.kind = kind;
@@ -171,6 +227,8 @@ struct Probe {
                 prompt.battle = r.read(1) != 0;
                 prompt.end = r.read(1) != 0;
                 prompt.shuffle = r.read(1) != 0;
+                if (allow_battle_effects && prompt.battle)
+                    prompt.choices.push_back({"battle_phase", "Enter Battle Phase", 6, {}});
                 if (prompt.end) prompt.choices.push_back({"end_turn", "End turn", 7, {}});
                 if (prompt.shuffle) prompt.choices.push_back({"shuffle_hand", "Shuffle own hand", 8, {}});
                 break;
@@ -194,15 +252,18 @@ struct Probe {
                 const auto minimum = r.read(1);
                 const auto maximum = r.read(1);
                 const auto count = r.read(1);
-                require(cancelable == 0 && minimum == 1 && maximum == 1,
+                require((cancelable == 0 || allow_battle_effects) && minimum == 1 && maximum == 1,
                         "reference session only supports single-card hand-limit discards");
                 for (uint32_t index = 0; index < count; ++index) {
-                    r.skip(4);
+                    const auto code = r.read(4);
                     const auto location = r.read(4);
-                    require((location & 0xff) == uint32_t(prompt.player) && ((location >> 8) & 0xff) == LOCATION_HAND,
+                    const bool field_target = allow_battle_effects && ((location >> 8) & 0xff) == LOCATION_MZONE;
+                    require(field_target || ((location & 0xff) == uint32_t(prompt.player) && ((location >> 8) & 0xff) == LOCATION_HAND),
                             "reference session only supports own-hand discard candidates");
-                    prompt.choices.push_back({"discard", "Discard hand slot " + std::to_string(((location >> 16) & 0xff) + 1),
-                        0, {1, uint8_t(index)}});
+                    prompt.choices.push_back({field_target ? "select_monster" : "discard",
+                        field_target ? "Player " + std::to_string((location & 0xff) + 1) + " monster zone " + std::to_string(((location >> 16) & 0xff) + 1)
+                                     : "Discard hand slot " + std::to_string(((location >> 16) & 0xff) + 1),
+                        0, {1, uint8_t(index)}, code, location});
                 }
                 break;
             }
@@ -210,8 +271,18 @@ struct Probe {
                 require(prompt.kind == 0, "multiple prompts in one packet");
                 prompt.kind = kind;
                 prompt.player = r.read(1);
-                require(r.read(1) == 0, "effect chains are outside this diagnostic");
+                const auto count = r.read(1);
+                require(allow_battle_effects || count == 0, "effect chains are outside this diagnostic");
                 r.skip(9); // special count + two timing masks (no chain candidates)
+                bool mandatory = false;
+                for (uint32_t index = 0; index < count; ++index) {
+                    r.skip(1); // descriptor
+                    mandatory = r.read(1) != 0 || mandatory;
+                    const auto code = r.read(4), location = r.read(4);
+                    r.skip(4); // effect description
+                    prompt.choices.push_back({"chain_effect", "Activate the offered effect", int32_t(index), {}, code, location});
+                }
+                if (count && !mandatory) prompt.choices.push_back({"pass_chain", "Pass optional response", -1, {}});
                 break;
             }
             default:
@@ -236,7 +307,7 @@ struct Probe {
             require((state & PROCESSOR_END) == 0, "duel ended before diagnostic completed");
             if ((state & PROCESSOR_WAITING) != 0) {
                 require(prompt.kind != 0, "core waiting without a supported prompt");
-                if (prompt.kind == MSG_SELECT_CHAIN) {
+                if (prompt.kind == MSG_SELECT_CHAIN && prompt.choices.empty()) {
                     set_responsei(duel, -1); // Only a verified empty candidate list.
                     continue;
                 }
@@ -297,7 +368,33 @@ void session_message(const std::string& fields) {
               "\",\"fixture_only\":true," << fields << "}\n" << std::flush;
 }
 
-std::string public_view(Probe& probe) {
+std::string visible_monsters(Probe& probe, int player, int viewer) {
+    std::ostringstream out;
+    out << '[';
+    constexpr uint32_t FLAGS = QUERY_CODE | QUERY_POSITION | QUERY_ATTACK | QUERY_DEFENSE;
+    for (int slot = 0; slot < 5; ++slot) {
+        if (slot) out << ',';
+        std::vector<uint8_t> buffer(32);
+        const auto length = query_card(probe.duel, player, LOCATION_MZONE, slot, FLAGS, buffer.data(), 0);
+        require(length == 4 || length == 24, "unexpected field-card query layout");
+        buffer.resize(length);
+        Reader reader{buffer};
+        require(reader.read(4) == uint32_t(length), "field query length mismatch");
+        if (length == 4) { out << "null"; continue; }
+        require(reader.read(4) == FLAGS, "field query flags mismatch");
+        const auto code = reader.read(4), location = reader.read(4);
+        const auto attack = int32_t(reader.read(4)), defense = int32_t(reader.read(4));
+        const auto position = (location >> 24) & 0xff;
+        const bool known = (position & POS_FACEUP) || player == viewer;
+        out << "{\"slot\":" << slot << ",\"position\":" << position << ",\"known\":" << (known ? "true" : "false");
+        if (known) out << ",\"code\":" << code << ",\"attack\":" << attack << ",\"defense\":" << defense;
+        out << '}';
+    }
+    out << ']';
+    return out.str();
+}
+
+std::string public_view(Probe& probe, int viewer) {
     std::ostringstream view;
     view << "{\"turn_player\":" << probe.turn_player << ",\"turn_number\":" << probe.turns
          << ",\"phase\":" << probe.phase << ",\"players\":[";
@@ -306,9 +403,15 @@ std::string public_view(Probe& probe) {
         view << "{\"deck_count\":" << query_field_count(probe.duel, player, LOCATION_DECK)
              << ",\"hand_count\":" << query_field_count(probe.duel, player, LOCATION_HAND)
              << ",\"monster_count\":" << query_field_count(probe.duel, player, LOCATION_MZONE)
-             << ",\"graveyard_count\":" << query_field_count(probe.duel, player, LOCATION_GRAVE) << '}';
+             << ",\"graveyard_count\":" << query_field_count(probe.duel, player, LOCATION_GRAVE);
+        if (probe.allow_battle_effects)
+            view << ",\"life_points\":" << std::max(0, probe.life_points[player])
+                 << ",\"monsters\":" << visible_monsters(probe, player, viewer);
+        view << '}';
     }
-    view << "]}";
+    view << ']';
+    if (probe.allow_battle_effects) view << ",\"viewer\":" << viewer;
+    view << '}';
     return view.str();
 }
 
@@ -317,26 +420,33 @@ void publish_prompt(Probe& probe, const Prompt& prompt, uint32_t id) {
     require(!prompt.choices.empty() && prompt.choices.size() <= 64, "unsupported/empty session prompt");
     std::ostringstream out;
     out << "\"type\":\"prompt\",\"player\":" << prompt.player << ",\"prompt_id\":" << id
-        << ",\"mode\":\"" << (prompt.kind == MSG_SELECT_IDLECMD ? "ACTION" : "DECISION")
+        << ",\"mode\":\"" << (prompt.kind == MSG_SELECT_IDLECMD || prompt.kind == MSG_SELECT_BATTLECMD ? "ACTION" : "DECISION")
         << "\",\"offers\":[";
     for (size_t i = 0; i < prompt.choices.size(); ++i) {
         if (i) out << ',';
         out << "{\"kind\":" << json_string(prompt.choices[i].kind)
             << ",\"label\":" << json_string(prompt.choices[i].label) << '}';
     }
-    out << "],\"view\":" << public_view(probe);
+    out << "],\"view\":" << public_view(probe, prompt.player);
     session_message(out.str());
 }
 
-void run_session(uint32_t seed) {
-    set_fixture_callbacks();
+void set_newdoria_callbacks();
+void arrange_newdoria(intptr_t duel, bool target_own_monster, bool mutual = false);
+
+void run_session(uint32_t seed, bool real_cards = false) {
+    if (real_cards) set_newdoria_callbacks();
+    else set_fixture_callbacks();
     DuelOwner owner(seed);
+    if (real_cards) arrange_newdoria(owner.handle, false);
     setup_fixture(owner.handle);
     Probe probe{owner.handle};
+    probe.allow_battle_effects = real_cards;
     Prompt prompt = probe.pump();
     std::array<uint32_t, 2> sequence{{0, 0}};
     uint32_t open_id = ++sequence.at(prompt.player);
-    session_message("\"type\":\"ready\",\"player\":-1,\"capabilities\":[\"normal_summon\",\"choose_zone\",\"end_turn\",\"shuffle_hand\",\"discard\",\"deck_out\"]");
+    session_message(std::string("\"type\":\"ready\",\"player\":-1,\"capabilities\":[\"normal_summon\",\"choose_zone\",\"end_turn\",\"shuffle_hand\",\"discard\",\"deck_out\"") +
+        (real_cards ? ",\"battle_phase\",\"attack\",\"select_monster\",\"chain_effect\",\"pass_chain\",\"main_two\",\"life_point_win\"]" : "]"));
     publish_prompt(probe, prompt, open_id);
     for (int command_count = 0; command_count < 4096; ++command_count) {
         // A waiting player is not a hung engine. The watchdog applies only while
@@ -386,7 +496,7 @@ void run_session(uint32_t seed) {
             for (int viewer = 0; viewer < 2; ++viewer)
                 session_message("\"type\":\"over\",\"player\":" + std::to_string(viewer) +
                     ",\"winner\":" + std::to_string(probe.winner) + ",\"reason_code\":" +
-                    std::to_string(probe.win_reason) + ",\"view\":" + public_view(probe));
+                    std::to_string(probe.win_reason) + ",\"view\":" + public_view(probe, viewer));
             return;
         }
         require(prompt.kind != MSG_RETRY, "core rejected a session-offered response");
@@ -455,6 +565,7 @@ void run_probe(uint32_t seed) {
               << "\"message_count\":" << probe.messages
               << ",\"transcript_fnv1a64\":\"" << digest.str() << "\"}\n";
 }
+#include "newdoria_fixture.h"
 } // namespace
 
 int main(int argc, char** argv) {
@@ -462,11 +573,15 @@ int main(int argc, char** argv) {
     // This diagnostic intentionally only builds for Linux in its first version.
     alarm(10);
     try {
-        const bool session = argc == 4 && std::strcmp(argv[1], "--session") == 0;
-        require((argc == 3 || session) && std::strcmp(argv[session ? 2 : 1], "--seed") == 0,
-                "usage: ocg_probe [--session] --seed UINT32");
-        const auto seed = unsigned_integer(argv[session ? 3 : 2]);
-        if (session) run_session(seed);
+        const bool real_session = argc == 4 && std::strcmp(argv[1], "--newdoria-session") == 0;
+        const bool session = real_session || (argc == 4 && std::strcmp(argv[1], "--session") == 0);
+        const bool newdoria = (argc == 4 || argc == 5) && std::strcmp(argv[1], "--newdoria") == 0;
+        require((argc == 3 || session || newdoria) && std::strcmp(argv[session || newdoria ? 2 : 1], "--seed") == 0,
+                "usage: ocg_probe [--session|--newdoria-session|--newdoria] --seed UINT32 [--target-own|--mutual]");
+        if (argc == 5) require(newdoria && (std::strcmp(argv[4], "--target-own") == 0 || std::strcmp(argv[4], "--mutual") == 0), "unsupported scenario option");
+        const auto seed = unsigned_integer(argv[session || newdoria ? 3 : 2]);
+        if (newdoria) run_newdoria(seed, argc == 5 && std::strcmp(argv[4], "--target-own") == 0, argc == 5 && std::strcmp(argv[4], "--mutual") == 0);
+        else if (session) run_session(seed, real_session);
         else run_probe(seed);
         return 0;
     } catch (const std::exception& error) {

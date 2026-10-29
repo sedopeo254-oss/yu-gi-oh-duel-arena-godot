@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Native integration checks. Requires an explicitly built ocg_probe binary."""
 import json
+import hashlib
 import os
 from pathlib import Path
 import select
@@ -53,6 +54,36 @@ class NativeProbeTests(unittest.TestCase):
                 self.assertEqual(report["seed"], seed)
                 self.assertEqual(report["turns"], 2)
                 self.assertEqual(report["summons"], 1)
+
+
+class NativeNewdoriaTests(NativeProbeTests):
+    # Override inherited diagnostic groups: they already run on NativeProbeTests.
+    test_real_core_scenario_and_repeatability = None
+    test_invalid_invocations = None
+    test_seed_boundaries_and_lifecycle_repetition = None
+
+    def test_battle_trigger_targets_either_players_monster(self):
+        for args, controller, graves in (((), 1, [1, 1]), (("--target-own",), 0, [2, 0])):
+            for seed in (0, 42, 4294967295):
+                with self.subTest(args=args, seed=seed):
+                    code, report = self.invoke("--newdoria", "--seed", str(seed), *args)
+                    self.assertEqual(code, 0)
+                    self.assertEqual(report["battle_turn"], 2)
+                    self.assertEqual(report["target_controller"], controller)
+                    self.assertEqual(report["graveyard_counts"], graves)
+                    self.assertTrue(report["battle_destroyed_newdoria"])
+                    self.assertTrue(report["effect_destroyed_target"])
+                    self.assertEqual(report["chains_solved"], 1)
+                    self.assertEqual(report["life_points"], [8000, 8000])
+                    self.assertEqual(report["script_sha256"], hashlib.sha256((ROOT / "Tools/ocg/lua/c4335645.lua").read_bytes()).hexdigest())
+
+    def test_equal_attack_mandatory_trigger_with_no_remaining_targets(self):
+        code, report = self.invoke("--newdoria", "--seed", "42", "--mutual")
+        self.assertEqual(code, 0)
+        self.assertEqual(report["chains_solved"], 1)
+        self.assertEqual(report["battle_destroyed"], 2)
+        self.assertEqual(report["effect_destroyed"], 0)
+        self.assertEqual(report["graveyard_counts"], [1, 1])
 
 
 class SessionWorker:

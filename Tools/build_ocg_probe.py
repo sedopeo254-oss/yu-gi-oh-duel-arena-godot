@@ -61,6 +61,42 @@ def extract_pinned_source(core: Path, revision: str, destination: Path) -> None:
         tar.extractall(destination, filter="data")
 
 
+def generate_card_fixture(root: Path, destination: Path) -> None:
+    """Strict two-card metadata conversion, not a permissive all-card importer."""
+    data = json.loads((root / "Data/reference_cards/newdoria_battle.json").read_text())
+    if not isinstance(data, dict) or type(data.get("schema_version")) is not int or data["schema_version"] != 1 or not isinstance(data.get("cards"), list):
+        raise ValueError("unsupported reference card data schema")
+    expected = {32541773: ("Normal Monster", "EARTH", 1200, 1500),
+                4335645: ("Effect Monster", "DARK", 1200, 800)}
+    if (len(data["cards"]) != 2 or not all(isinstance(card, dict) and type(card.get("code")) is int for card in data["cards"])
+            or {card["code"] for card in data["cards"]} != set(expected)):
+        raise ValueError("reference fixture must contain exactly the two reviewed card IDs")
+    rows = []
+    for card in data["cards"]:
+        code = card["code"]
+        passcode = card.get("passcode")
+        if not isinstance(passcode, str) or len(passcode) != 8 or not passcode.isascii() or not passcode.isdigit() or int(passcode) != code:
+            raise ValueError("printed passcode must preserve eight digits and map to the integer core ID")
+        category, attribute, attack, defense = expected[code]
+        if (card.get("category"), card.get("attribute"), card.get("attack"), card.get("defense")) != expected[code]:
+            raise ValueError("reference fixture differs from the reviewed official card metadata")
+        if any(type(card.get(key)) is not int for key in ("level", "attack", "defense")) or card.get("level") != 4 or card.get("race") != "Fiend":
+            raise ValueError("reference fixture has an unsupported level or race")
+        subtype = "TYPE_NORMAL" if category == "Normal Monster" else "TYPE_EFFECT"
+        rows.append(f"{{{code}u, TYPE_MONSTER | {subtype}, 4, ATTRIBUTE_{attribute}, RACE_FIEND, {attack}, {defense}}}")
+    script = (root / "Tools/ocg/lua/c4335645.lua").read_text()
+    digest = hashlib.sha256(script.encode()).hexdigest()
+    checks = (root / "Tools/ocg/lua/test_newdoria.lua").read_text()
+    destination.write_text(
+        "// Generated from reviewed project-owned inputs; do not edit.\n#pragma once\n"
+        "struct ReferenceCardRow { uint32_t code, type, level, attribute, race; int32_t attack, defense; };\n"
+        "static const ReferenceCardRow REFERENCE_CARDS[] = {" + ",".join(rows) + "};\n"
+        "static const char NEWDORIA_LUA[] = " + json.dumps(script) + ";\n"
+        "static const char NEWDORIA_CHECKS[] = " + json.dumps(checks) + ";\n"
+        "static const char NEWDORIA_LUA_SHA256[] = \"" + digest + "\";\n"
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--fetch", action="store_true", help="download pinned core and Lua")
@@ -102,6 +138,7 @@ def main() -> int:
     lua = CACHE / f"lua-{lock['lua']['version']}" / "src"
     objects = CACHE / "objects"
     objects.mkdir(exist_ok=True)
+    generate_card_fixture(ROOT, objects / "reference_cards.h")
     # Upstream premake/lua.lua compiles Lua as C++, matching interpreter.h linkage.
     sources = [("g++", source) for source in sorted(lua.glob("*.c")) if source.name not in ("lua.c", "luac.c", "linit.c", "onelua.c")]
     sources += [("g++", source) for source in sorted(core_source.glob("*.cpp"))]
@@ -112,7 +149,7 @@ def main() -> int:
         obj = objects / (source.name + ".o")
         flags = ["-std=c++14"] if compiler == "g++" else ["-std=c99"]
         run(compiler, *flags, "-O2", "-DLUA_USE_LINUX", f'-DOCG_REVISION="{revision}"',
-            "-I", lua, "-I", core_source, "-c", source, "-o", obj)
+            "-I", lua, "-I", core_source, "-I", objects, "-c", source, "-o", obj)
         return obj
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=args.jobs) as pool:

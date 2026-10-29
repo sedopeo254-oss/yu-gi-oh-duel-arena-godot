@@ -19,7 +19,7 @@ local two-player duel arena that will eventually sit on top of it.
 > and `docs/PLAYABLE_BOARD.md` supersede their claims that the board is absent or F5 opens the spike.
 > CI's pinned Godot 4.7.1 validation remains separate from the local 4.6.3 result.
 
-### Optional upstream-core diagnostic
+### Optional upstream-core lab
 
 An opt-in Linux development adapter can compile the pinned MIT Fluorohydride
 YGOPro core and run a real, deterministic Normal Summon / turn-flow diagnostic
@@ -29,7 +29,10 @@ fork are references, not linked dependencies. See
 [build instructions, licenses and scope](docs/OCG_CORE_DIAGNOSTIC.md).
 The next milestone adds a [stateful native reference session](docs/OCG_REFERENCE_SESSION.md)
 with isolated processes, player-specific choices and tested deck-out completion.
-It still uses synthetic Normal Monsters, not the production board or real Lua cards.
+An additional [Newdoria battle lab](docs/OCG_NEWDORIA_LAB.md) loads two reviewed
+real-card records and one authored Lua effect, presents native choices in a separate
+Godot UI, and continues to a tested LP victory. Its decks are still synthetic;
+it is not a full-card backend or a replacement for the production board.
 
 ---
 
