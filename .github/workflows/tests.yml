@@ -103,6 +103,9 @@ jobs:
       - name: Event-driven card animation checks
         run: bash ./Tools/run_tests.sh SceneAnimationCheck
 
+      - name: Event-driven sound, settings and privacy checks
+        run: bash ./Tools/run_tests.sh SceneDuelAudioCheck
+
       - name: Procedural animation draw-path checks
         run: bash ./Tools/run_tests.sh SceneAnimationRenderCheck
 

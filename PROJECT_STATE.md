@@ -6,6 +6,21 @@
 > [`docs/PLAYABLE_BOARD.md`](docs/PLAYABLE_BOARD.md) for the current implementation.
 > The unit-A tables below are historical; they do not describe the current F5 scene.
 
+## User-approved presentation continuation — 2026-10-29: duel audio
+
+The normal playable board now has original anime-inspired summon, attack, face-up
+position and destruction cues, driven only by the existing viewer-projected animation
+timeline. Persistent volume/mute, cover/restart/reduced-motion cancellation and
+replaceable AudioStream resources are implemented. The initial Japanese Duel Monsters
+episodes 1–224 reference direction now also permits game references; these remain
+original substitutes, **not** official recordings or a verified sonic match.
+No engine/rules/card/deck changes. See `docs/DUEL_AUDIO.md` and
+`Reports/DUEL_AUDIO_TEST_RESULTS.md` for coverage and the unavailable screenshot/audition
+checks. Full regression remains 10,653 / 10,653 across 101 suites; new audio scene gate
+has 81 assertions. The responsive integration retains the visual pass and adds phone-safe
+audio controls, with 144 layout assertions; see `Reports/ARENA_AUDIO_INTEGRATION.md`.
+The older phase checkpoint below is retained as historical context.
+
 > Persistent resume file. A new Claude Code session should read **this file first**,
 > then read only the targeted files named in §8. Do **not** recursively reread the repository.
 

@@ -30,6 +30,12 @@ func _run() -> void:
 		await process_frame
 		await process_frame
 		_check(screen._motion_button.is_visible_in_tree() and Rect2(Vector2.ZERO, Vector2(dimensions)).encloses(screen._motion_button.get_global_rect()), "reduced-motion control remains visible and reachable at %s" % dimensions)
+		_check(screen._audio_button.is_visible_in_tree() and Rect2(Vector2.ZERO, Vector2(dimensions)).encloses(screen._audio_button.get_global_rect()), "sound settings remain reachable at %s" % dimensions)
+		screen._audio_button.pressed.emit()
+		await process_frame
+		_check(screen._audio_dialog.visible and screen._audio_dialog.size.x <= dimensions.x and screen._audio_dialog.size.y <= dimensions.y, "sound settings fit viewport at %s" % dimensions)
+		_check(screen._audio_slider.size.y >= 48 and screen._audio_toggle.size.y >= 48, "sound controls retain touch-sized targets at %s" % dimensions)
+		screen._audio_dialog.hide()
 		_check(screen._compact_layout and screen._tabs.visible, "compact navigation at %s" % dimensions)
 		if dimensions.x < 700:
 			_check(screen._board.get_combined_minimum_size().x <= screen._middle_scroll.size.x - 8, "all five field lanes fit narrow viewport at %s" % dimensions)
@@ -66,6 +72,12 @@ func _run() -> void:
 	await process_frame
 	_check(screen._restart_dialog.size.x <= root.size.x, "confirmation fits narrow viewport")
 	screen._restart_dialog.hide()
+	screen._popup_audio_settings()
+	root.size = Vector2i(390, 844)
+	screen._sync_window_layout()
+	await process_frame
+	_check(screen._audio_dialog.visible and screen._audio_dialog.size.x <= 390, "an open sound dialog adapts to window resize")
+	screen._audio_dialog.hide()
 	var preference_before: bool = screen._animations.reduced_motion
 	screen._set_reduced_motion(true)
 	screen._animations.set_reduced_motion(false)
@@ -81,6 +93,7 @@ func _run() -> void:
 	for failure in failures: print("FAIL: ", failure)
 	print("RESULT: ", "PASS" if failures.is_empty() else "FAIL")
 	screen.free()
+	await create_timer(1.1).timeout
 	quit(0 if failures.is_empty() else 1)
 
 func _check(condition: bool, description: String) -> void:

@@ -5,12 +5,14 @@
 
 This is an early **local two-human-player** client for the existing 77-card engine,
 not a finished Duel Generation equivalent. There is no CPU opponent, campaign,
-collection progression, networking, 3D arena, regular-board audio, save/resume or replay browser.
+collection progression, networking, 3D arena, save/resume or replay browser.
 The board now has an [event-driven animation prototype](CARD_ANIMATIONS.md), with a separate
 opt-in Portrait showcase with original synthesized sound. These are procedural
 illustrations, not finished licensed artwork.
 The [responsive presentation pass](ARENA_PRESENTATION.md) adds desktop/phone layouts,
 category illustrations, life-point meters and a saved reduced-motion preference.
+The board also has [original action sounds](DUEL_AUDIO.md), saved mute/volume controls,
+and privacy-aware cancellation. No official recordings are bundled.
 The UI is English. All illustrations are original procedural vector art;
 no Konami game artwork has been copied or downloaded.
 
@@ -33,6 +35,8 @@ no Konami game artwork has been copied or downloaded.
    own session view and event feed.
 8. **Surrender** requires confirmation. **New duel** requires confirmation and
    starts a fresh seed; after a result, **Play again** starts another duel.
+9. **Sound** opens effects volume/mute settings, also available from the cover.
+   **Reduce motion** also silences action cues; either setting leaves gameplay available.
 
 ### Privacy scope
 

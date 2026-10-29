@@ -29,8 +29,10 @@ profiles changed.
   the Arena tab on reveal. Actor overlays are hidden on non-arena tabs.
 - Surrender/new-duel confirmation text wraps within narrow windows.
 
-The regular board still has no CPU opponent, campaign, 3D arena, audio or
-save/resume. The separate opt-in Portrait showcase does have original synthesized
+The regular board still has no CPU opponent, campaign, 3D arena or save/resume. It now
+includes [original synthesized action sounds](DUEL_AUDIO.md), with persistent volume/mute
+and a touch-sized Sound settings dialog that fits the same narrow layouts. The separate
+opt-in Portrait showcase retains its own original synthesized
 sound and an atmospheric stage; see `CARD_ANIMATIONS.md`. Touch sizing and layout are tested in desktop windows; physical Android,
 iOS, high-DPI devices and screen readers have not been exercised. Pass-and-play
 handoff timing retains the privacy limitations in `PLAYABLE_BOARD.md`.
@@ -40,6 +42,7 @@ handoff timing retains the privacy limitations in `PLAYABLE_BOARD.md`.
 ```bash
 bash Tools/run_tests.sh --import
 bash Tools/run_tests.sh SceneVisualCheck
+bash Tools/run_tests.sh SceneDuelAudioCheck
 bash Tools/run_tests.sh SceneBoardCheck
 bash Tools/run_tests.sh SceneBoardDuelCheck
 bash Tools/run_tests.sh SceneAnimationCheck
@@ -48,13 +51,15 @@ bash Tools/run_tests.sh SceneSpikeCheck
 bash Tools/run_tests.sh RunTests
 ```
 
-`SceneVisualCheck` adds 125 assertions using the actual board/session at 1600×900,
+`SceneVisualCheck` now has 144 assertions (the original 125 plus 19 audio integration
+checks) using the actual board/session at 1600×900,
 1280×720, 800×600, 480×900, 390×844, 360×800 and 320×640. It checks resize/prompt
 preservation, visible tab button connections, all five phone lanes fitting, large
 opponent hands wrapping, reachable reduced-motion controls, 48-pixel targets,
 inspector opening, actor concealment, private handoff, confirmation fit,
-preference reload and returning to the desktop layout. Existing gameplay/privacy
-and animation tests are unchanged.
+preference reload and returning to the desktop layout. Sound-button reachability,
+first-open dialog fit, touch-sized audio controls and resize while open are also checked.
+Existing gameplay/privacy and animation assertions remain intact.
 
 A reproducible visual capture drives a real Normal Summon, then saves desktop,
 tablet, phone, moves, inspector and cover PNGs, plus a labeled synthetic 3000/2500
@@ -68,6 +73,8 @@ godot --path . --rendering-method gl_compatibility --audio-driver Dummy \
 It requires an available display. Output defaults to `user://arena-previews`;
 `DUEL_ARENA_PREVIEW_DIR` can select a local output directory. The local inspection
 used Godot **4.6.3** with Mesa/OpenGL, not CI-pinned 4.7.1 or Forward+. Screenshots
-were visually inspected at 1600×900, 1280×720, 390×844 and 320×640. Independent
+were visually inspected at 1600×900, 1280×720, 390×844 and 320×640 before audio integration.
+The audio integration's layout checks are headless; its screenshot attempt could not
+create an X11 display in the sandbox. Independent
 read-only review found no remaining blocker after the narrow-stat correction.
 This is not a claim of full human-playthrough or hardware-touch acceptance.

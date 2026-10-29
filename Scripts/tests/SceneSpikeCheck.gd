@@ -111,6 +111,8 @@ func _finish(error: String) -> void:
 			failures.append("a session message was handled off the main thread")
 		print("  [spike] %d frames; clicked '%s'; status '%s'" % [frames, clicked_label,
 			str(screen.status_line)])
+		# Silence presentation before explicit removal pauses child audio players.
+		if screen.has_method("cover_board"): screen.cover_board()
 		root.remove_child(screen)
 		screen.free()
 		screen = null
@@ -120,4 +122,6 @@ func _finish(error: String) -> void:
 		for f in failures:
 			print("  FAIL " + f)
 		print("RESULT: FAIL")
+	# The configured main scene now has audio; allow stopped mixer playback to retire.
+	await create_timer(1.1).timeout
 	quit()

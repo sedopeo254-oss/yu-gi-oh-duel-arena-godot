@@ -6,6 +6,8 @@ extends Control
 ## The board may rebuild Controls freely: anchors are rebound by public field location.
 signal animation_started(action: String, visible_name: String)
 signal animation_finished(action: String, visible_name: String)
+## Audio and any later cosmetic consumers must stop with the visible timeline.
+signal playback_cancelled
 
 const Registry = preload("res://Scripts/presentation/CardAnimationRegistry.gd")
 const MAX_QUEUED := 32
@@ -37,6 +39,7 @@ func reset() -> void:
 
 func conceal() -> void:
 	# Cancel instead of pausing: no one can uncover the previous viewer's active effect.
+	playback_cancelled.emit()
 	_covered = true
 	active_viewer = -1
 	active.clear()
@@ -65,7 +68,9 @@ func ingest(player: int, entries: Array, snapshot: Dictionary) -> void:
 	# A fresh snapshot can conceal/remove a card while its old timeline is running.
 	# Cancel stale identification immediately, not merely the next idle drawing.
 	if active_viewer == player:
-		if not active.is_empty() and not _still_public(active, after, destroyed_ids): active.clear()
+		if not active.is_empty() and not _still_public(active, after, destroyed_ids):
+			active.clear()
+			playback_cancelled.emit()
 		_queue = _queue.filter(func(job): return _still_public(job, after, destroyed_ids))
 	_pending[player] = _pending[player].filter(func(job): return _still_public(job, after, destroyed_ids))
 	for entry in entries:
@@ -105,6 +110,7 @@ func ingest(player: int, entries: Array, snapshot: Dictionary) -> void:
 func present(player: int) -> void:
 	if player not in [0, 1]: return
 	if active_viewer != player:
+		playback_cancelled.emit()
 		active.clear()
 		_queue.clear()
 		_elapsed = 0.0
@@ -123,6 +129,7 @@ func set_reduced_motion(enabled: bool) -> void:
 	queue_redraw()
 
 func skip() -> void:
+	playback_cancelled.emit()
 	active.clear()
 	_queue.clear()
 	_pending = [[], []]

@@ -11,6 +11,7 @@ const MUTED := Color("a7b6c6")
 const CardFace = preload("res://Scripts/ui/ArenaCard.gd")
 const Backdrop = preload("res://Scripts/ui/ArenaBackdrop.gd")
 const AnimationDirector = preload("res://Scripts/presentation/CardAnimationDirector.gd")
+const DuelSound = preload("res://Scripts/presentation/DuelAudio.gd")
 
 var session: EngineSession
 var current: Dictionary = {}
@@ -24,6 +25,15 @@ var handoff_required := true
 var finished := false
 var _catalog: Dictionary = {}
 var _animations: CardAnimationDirector
+var _sound
+var _audio_button: Button
+var _audio_dialog: AcceptDialog
+var _audio_toggle: CheckButton
+var _audio_slider: HSlider
+var _audio_value: Label
+var _audio_note: Label
+var _audio_column: VBoxContainer
+var _audio_description: Label
 var _content: HBoxContainer
 var _left_panel: VBoxContainer
 var _right_panel: PanelContainer
@@ -194,9 +204,12 @@ func _build_layout() -> void:
 	motion_button.text = "Reduce motion"
 	motion_button.custom_minimum_size.y = 48
 	motion_button.add_theme_font_size_override("font_size", 14)
-	motion_button.tooltip_text = "Stop cosmetic movement. All gameplay remains available."
+	motion_button.tooltip_text = "Stop cosmetic movement and action sounds. All gameplay remains available."
 	motion_button.toggled.connect(_set_reduced_motion)
 	toolbar.add_child(motion_button)
+	_audio_button = _button("Sound", _popup_audio_settings)
+	_audio_button.custom_minimum_size.x = 120
+	toolbar.add_child(_audio_button)
 	var restart_button := _button("New duel", func(): _popup_confirmation(_restart_dialog))
 	restart_button.custom_minimum_size.x = 110
 	toolbar.add_child(restart_button)
@@ -276,8 +289,14 @@ func _build_layout() -> void:
 	page.add_child(_footer)
 	_animations = AnimationDirector.new()
 	add_child(_animations)
+	_sound = DuelSound.new()
+	add_child(_sound)
+	_animations.animation_started.connect(_sound.play_cue)
+	_animations.animation_finished.connect(_sound.finish_cue)
+	_animations.playback_cancelled.connect(_sound.stop)
 	_load_presentation_preferences()
 	_build_cover()
+	_build_audio_settings()
 	_restart_dialog = ConfirmationDialog.new()
 	_restart_dialog.dialog_autowrap = true
 	_restart_dialog.title = "Start a new duel?"
@@ -323,6 +342,60 @@ func _build_cover() -> void:
 	_reveal.custom_minimum_size.y = 62
 	column.add_child(_reveal)
 	column.add_child(_button("New duel", func(): _popup_confirmation(_restart_dialog)))
+	column.add_child(_button("Sound settings", _popup_audio_settings))
+
+func _build_audio_settings() -> void:
+	_audio_dialog = AcceptDialog.new()
+	_audio_dialog.title = "Sound settings"
+	add_child(_audio_dialog)
+	var column := VBoxContainer.new()
+	_audio_column = column
+	column.custom_minimum_size.x = 252
+	column.add_theme_constant_override("separation", 16)
+	_audio_dialog.add_child(column)
+	_audio_toggle = CheckButton.new()
+	_audio_toggle.text = "Duel sound effects"
+	_audio_toggle.custom_minimum_size.y = 48
+	_audio_toggle.toggled.connect(_sound.set_enabled)
+	column.add_child(_audio_toggle)
+	column.add_child(_label("Effects volume", 16))
+	var row := HBoxContainer.new()
+	column.add_child(row)
+	_audio_slider = HSlider.new()
+	_audio_slider.min_value = 0
+	_audio_slider.max_value = 100
+	_audio_slider.step = 1
+	_audio_slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_audio_slider.custom_minimum_size = Vector2(180, 48)
+	_audio_slider.tooltip_text = "Sound effects volume. Zero is silent."
+	_audio_slider.value_changed.connect(func(value): _sound.set_volume(value / 100.0))
+	row.add_child(_audio_slider)
+	_audio_value = _label("", 16)
+	_audio_value.custom_minimum_size.x = 45
+	row.add_child(_audio_value)
+	var description := _label("Original anime-inspired synthesized cues.\nNot official anime recordings.\nReduce motion also silences action cues.", 14, MUTED)
+	_audio_description = description
+	description.size.x = 252
+	description.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	column.add_child(description)
+	_audio_note = _label("", 13, MUTED)
+	column.add_child(_audio_note)
+	_sound.preferences_changed.connect(_refresh_audio_settings)
+	_refresh_audio_settings()
+
+func _popup_audio_settings() -> void:
+	var width := mini(460, int(get_viewport_rect().size.x) - 32)
+	# Wrapped text needs a real width before the first popup computes its minimum height.
+	_audio_column.custom_minimum_size.x = width - 36
+	_audio_description.size.x = width - 36
+	_audio_dialog.popup_centered(Vector2i(width, 340))
+
+func _refresh_audio_settings() -> void:
+	_audio_toggle.set_pressed_no_signal(_sound.enabled)
+	_audio_slider.set_value_no_signal(_sound.volume * 100.0)
+	_audio_value.text = "%d%%" % roundi(_sound.volume * 100.0)
+	_audio_button.text = "Sound %s" % (_audio_value.text if _sound.enabled and _sound.volume > 0.0 else "off")
+	_audio_note.text = "Saved on this device." if _sound.last_save_error == OK else "Works now, but preferences could not be saved."
 
 func _show_cover(title: String) -> void:
 	_animations.conceal()
@@ -805,6 +878,7 @@ func _sync_window_layout() -> void:
 	_descriptor.visible = not _compact_layout
 	_footer.visible = logical.y >= 700 and logical.x >= 700
 	_apply_layout()
+	if _audio_dialog != null and _audio_dialog.visible: _popup_audio_settings()
 	if (narrow_before != _narrow_board or _narrow_board) and not handoff_required: _render_board()
 
 func _select_tab(index: int) -> void:

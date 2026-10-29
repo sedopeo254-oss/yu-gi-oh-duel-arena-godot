@@ -40,6 +40,8 @@ func _run() -> void:
 	director.free()
 	# Check actual board wiring with the asynchronous session, not just fixture projection.
 	await _board_check()
+	# The playable board now has audio. Let the mixer retire its stopped playback.
+	await create_timer(1.1).timeout
 	print("Animations: %d assertions" % checks)
 	for failure in failures: print("FAIL: ", failure)
 	print("RESULT: ", "PASS" if failures.is_empty() else "FAIL")

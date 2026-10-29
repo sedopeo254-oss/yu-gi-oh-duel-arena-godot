@@ -156,6 +156,9 @@ func _finish() -> void:
 	print("Board: %d assertions, %d frames, summoned=%s, handoff=%s, restart=%s" % [assertions, frames, summoned, saw_handoff, restarted])
 	for failure in failures: print("FAIL: ", failure)
 	print("RESULT: ", "PASS" if failures.is_empty() else "FAIL")
+	screen.cover_board()
 	root.remove_child(screen)
 	screen.free()
+	# The audio mixer retires stopped playback asynchronously, even in headless mode.
+	await create_timer(1.1).timeout
 	quit()

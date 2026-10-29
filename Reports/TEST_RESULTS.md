@@ -1,5 +1,16 @@
 # TEST_RESULTS
 
+## 2026-10-29 — original playable-board audio
+
+Original anime-inspired action sound, persistent volume/mute and viewer-safe cancellation
+are verified by the new `SceneDuelAudioCheck` (**81 assertions**). Full regression remains
+**10,653 / 10,653 across 101 suites**, with existing assertion counts unchanged. Local
+Godot **4.6.3** validation, not a remote 4.7.1 CI claim. See
+[`DUEL_AUDIO_TEST_RESULTS.md`](DUEL_AUDIO_TEST_RESULTS.md) for the other checks, measured
+PCM, corrected mixer-retirement teardown, and unavailable screenshot/audition limits.
+The combined responsive-board integration adds **144 layout assertions** and preserves
+both feature sets; see [`ARENA_AUDIO_INTEGRATION.md`](ARENA_AUDIO_INTEGRATION.md).
+
 **Last run:** 2026-09-10 (**Phase 7 unit A COMPLETE — the engine session adapter.** The
 `DuelEngine` runs on its own worker thread behind `EngineSession`; the UI thread receives every
 question on the right player's channel as plain data and answers it; **no engine, rules or card

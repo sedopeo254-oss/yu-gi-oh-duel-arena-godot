@@ -32,7 +32,9 @@ It is not silently added to the approved production card library or deck lists.
 
 The gallery showcase adds original generated-in-code sound design: a quiet ambient drone,
 summon swell, wood creak, attack sweep and cracking/dust cues. **Sound** mutes it independently.
-No audio samples or recordings are used; the normal playable board remains silent.
+No audio samples or recordings are used. The normal playable board now has its own
+[original anime-inspired action sound layer](DUEL_AUDIO.md), with persistent volume/mute
+and privacy-aware cancellation; it does not reuse the showcase ambience.
 
 ## Choreography
 
@@ -118,7 +120,8 @@ subsequent detailed-art, atmosphere and sound polish pass.
 - One bespoke procedural profile, now shaded and detailed; other monsters use a faceted
   hologram fallback. These remain programmatic illustrations, not production textures,
   skeletal rigs or 3D models. No 3D camera, cinematic board cut-ins or animation editor tooling.
-- Sound and atmospheric shader belong to the showcase only, not the normal playable board.
+- The atmospheric shader and Portrait soundscape belong to the showcase only; the normal
+  playable board has the separate generic action palette documented in `DUEL_AUDIO.md`.
 - The current compact card art windows are small. The showcase magnifies the same profile
   for review; this does not claim that the production board is finished visual design.
 - Effects are cosmetic and do not block actions. Rapid play, new snapshots, handoff or

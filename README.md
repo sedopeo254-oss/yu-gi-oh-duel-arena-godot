@@ -14,7 +14,8 @@ local two-player duel arena that will eventually sit on top of it.
 > The full engine suite passes **10,653 assertions across 101 suites** on local Godot 4.6.3;
 > board checks additionally cover privacy/navigation flows and a natural duel ending.
 > See [verification details](Reports/TEST_RESULTS.md#2026-10-29--b0-hidden-identity-projection-regression).
-> There is no CPU opponent, campaign, 3D or audio; handoff timing is not side-channel-safe.
+> [Original action sound effects](docs/DUEL_AUDIO.md) now accompany the responsive board,
+> with saved volume/mute. There is no CPU opponent, campaign or 3D; handoff timing is not side-channel-safe.
 > The detailed roadmap and status tables below record the earlier unit-A baseline; this notice
 > and `docs/PLAYABLE_BOARD.md` supersede their claims that the board is absent or F5 opens the spike.
 > CI's pinned Godot 4.7.1 validation remains separate from the local 4.6.3 result.
@@ -1000,8 +1001,9 @@ Three things will get a change rejected regardless of how good the code is:
 
 ## Card images and assets
 
-**This repository contains no card images, no game art, no ripped assets and no audio.**
-`Data/card_art/` and `Assets/` are empty scaffolding, and `.gitignore` keeps card art out.
+**This repository contains no official card images, ripped game assets or official audio recordings.**
+The presentation uses original procedural illustrations and synthesized action sounds.
+`Data/card_art/` remains local-only, and `.gitignore` keeps card art out.
 
 Nothing in the engine or the test suite needs an image: cards are identified by name and
 passcode, and the entire suite runs headless. If you want art locally for future UI work,

@@ -53,4 +53,6 @@ func finish(result):
 	print("UI NATURAL DUEL: ", result, " | frames=", frames, " actions=", actions, " turn=", screen.view.get("turn"), " status=", screen.status_line, " stats=", screen.session.stats())
 	print("RESULT: ", "PASS" if result == "PASS" else "FAIL")
 	screen.free()
+	# The audio mixer retires stopped playback asynchronously, even in headless mode.
+	await create_timer(1.1).timeout
 	quit(0 if result == "PASS" else 1)
